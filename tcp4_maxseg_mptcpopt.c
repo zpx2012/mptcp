@@ -41,6 +41,14 @@
 
 #include <errno.h>            // errno, perror()
 
+//××××××××××××××
+//Variables need to be setted
+#define inferce 
+#define
+
+
+
+
 // Define some constants.
 #define ETH_HDRLEN 14  // Ethernet header length
 #define IP4_HDRLEN 20  // IPv4 header length
@@ -89,7 +97,7 @@ main (int argc, char **argv)
 
   //×××××××××××××××××××××××××××××××××
   // Interface to send packet through.
-  strcpy (interface, "eth0");
+  strcpy (interface, "wlp6s0");
 
   // Submit request for a socket descriptor to look up interface.
   if ((sd = socket (PF_PACKET, SOCK_RAW, htons (ETH_P_ALL))) < 0) {
@@ -127,19 +135,19 @@ main (int argc, char **argv)
 
   //××××××××××××××××××××××××××××××××××××××××××××××××××××××××
   // Set destination MAC address: you need to fill these out
-  dst_mac[0] = 0x00;
-  dst_mac[1] = 0x26;
-  dst_mac[2] = 0xb9;
-  dst_mac[3] = 0x7e;
-  dst_mac[4] = 0x3d;
-  dst_mac[5] = 0x10;
+  dst_mac[0] = 0x44;
+  dst_mac[1] = 0x94;
+  dst_mac[2] = 0xfc;
+  dst_mac[3] = 0x73;
+  dst_mac[4] = 0xd2;
+  dst_mac[5] = 0xf1;
 
   //×××××××××××××××××××××××××××××××××××××××××××××××
   // Source IPv4 address: you need to fill this out
-  strcpy (src_ip, "192.168.1.132");
+  strcpy (src_ip, "192.168.1.133");
 
   // Destination URL or IPv4 address: you need to fill this out
-  strcpy (target, "169.235.31.179");
+  strcpy (target, "130.104.230.45");
 
   // Fill out hints for getaddrinfo().
   memset (&hints, 0, sizeof (struct addrinfo));
@@ -274,7 +282,7 @@ main (int argc, char **argv)
   tcphdr.th_sport = htons (60);
 
   // Destination port number (16 bits)
-  tcphdr.th_dport = htons (99);
+  tcphdr.th_dport = htons (80);
 
   // Sequence number (32 bits)
   tcphdr.th_seq = htonl (random() % 65535);
