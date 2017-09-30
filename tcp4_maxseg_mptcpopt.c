@@ -43,11 +43,17 @@
 
 //××××××××××××××
 //Variables need to be setted
-#define inferce 
-#define
-
-
-
+#define interface "wlp6s0" 
+#define src_ip "192.168.1.133"
+#define dst_ip "130.104.230.45"
+#define src_port 60
+#define dst_port 80
+#define DEST_MAC0
+#define DEST_MAC1
+#define DEST_MAC2
+#define DEST_MAC3
+#define DEST_MAC4
+#define DEST_MAC5
 
 // Define some constants.
 #define ETH_HDRLEN 14  // Ethernet header length
@@ -67,7 +73,8 @@ int
 main (int argc, char **argv)
 {
   int i, c, status, frame_length, sd, bytes, *ip_flags, *tcp_flags, nopt, *opt_len, buf_len;
-  char *interface, *target, *src_ip, *dst_ip;
+  char *target;
+//  char *interface, *target, *src_ip, *dst_ip;
   struct ip iphdr;
   struct tcphdr tcphdr;
   uint8_t *src_mac, *dst_mac, *ether_frame;
@@ -78,15 +85,13 @@ main (int argc, char **argv)
   struct ifreq ifr;
   void *tmp;
 
+  ether_frame =
+
   // Allocate memory for various arrays.
   src_mac = allocate_ustrmem (6);
   dst_mac = allocate_ustrmem (6);
   ether_frame = allocate_ustrmem (IP_MAXPACKET);
-  interface = allocate_strmem (40);
-  target = allocate_strmem (40);
-  src_ip = allocate_strmem (INET_ADDRSTRLEN);
-  dst_ip = allocate_strmem (INET_ADDRSTRLEN);
-  ip_flags = allocate_intmem (4);
+  target = allocate_strmem (40);  ip_flags = allocate_intmem (4);
   tcp_flags = allocate_intmem (8);
   opt_len = allocate_intmem (10);
   options = allocate_ustrmemp (10);
@@ -94,10 +99,6 @@ main (int argc, char **argv)
     options[i] = allocate_ustrmem (40);
   }
   opt_buffer = allocate_ustrmem (40);
-
-  //×××××××××××××××××××××××××××××××××
-  // Interface to send packet through.
-  strcpy (interface, "wlp6s0");
 
   // Submit request for a socket descriptor to look up interface.
   if ((sd = socket (PF_PACKET, SOCK_RAW, htons (ETH_P_ALL))) < 0) {
@@ -133,21 +134,14 @@ main (int argc, char **argv)
   }
   printf ("Index for interface %s is %i\n", interface, device.sll_ifindex);
 
-  //××××××××××××××××××××××××××××××××××××××××××××××××××××××××
+  //
   // Set destination MAC address: you need to fill these out
-  dst_mac[0] = 0x44;
-  dst_mac[1] = 0x94;
-  dst_mac[2] = 0xfc;
-  dst_mac[3] = 0x73;
-  dst_mac[4] = 0xd2;
-  dst_mac[5] = 0xf1;
-
-  //×××××××××××××××××××××××××××××××××××××××××××××××
-  // Source IPv4 address: you need to fill this out
-  strcpy (src_ip, "192.168.1.133");
-
-  // Destination URL or IPv4 address: you need to fill this out
-  strcpy (target, "130.104.230.45");
+  dst_mac[0] = DEST_MAC0;
+  dst_mac[1] = DEST_MAC1;
+  dst_mac[2] = DEST_MAC2;
+  dst_mac[3] = DEST_MAC3;
+  dst_mac[4] = DEST_MAC4;
+  dst_mac[5] = DEST_MAC5;
 
   // Fill out hints for getaddrinfo().
   memset (&hints, 0, sizeof (struct addrinfo));
@@ -279,10 +273,10 @@ main (int argc, char **argv)
   // TCP header
   
   // Source port number (16 bits)
-  tcphdr.th_sport = htons (60);
+  tcphdr.th_sport = htons (src_port);
 
   // Destination port number (16 bits)
-  tcphdr.th_dport = htons (80);
+  tcphdr.th_dport = htons (dst_port);
 
   // Sequence number (32 bits)
   tcphdr.th_seq = htonl (random() % 65535);
@@ -380,10 +374,7 @@ main (int argc, char **argv)
   free (src_mac);
   free (dst_mac);
   free (ether_frame);
-  free (interface);
   free (target);
-  free (src_ip);
-  free (dst_ip);
   free (ip_flags);
   free (tcp_flags);
   free (opt_len);
@@ -395,6 +386,9 @@ main (int argc, char **argv)
 
   return (EXIT_SUCCESS);
 }
+
+
+
 
 // Computing the internet checksum (RFC 1071).
 // Note that the internet checksum does not preclude collisions.
