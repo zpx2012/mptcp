@@ -68,292 +68,19 @@ char **allocate_strmemp (int);
 uint8_t *allocate_ustrmem (int);
 uint8_t **allocate_ustrmemp (int);
 int *allocate_intmem (int);
+int get_mptcp_capable_ether_frame(uint8_t *ether_frame,struct sockaddr_ll* device);
+
 
 int
 main (int argc, char **argv)
 {
-  int i, c, status, frame_length, sd, bytes, *ip_flags, *tcp_flags, nopt, *opt_len, buf_len;
-  char *target;
-//  char *interface, *target, *src_ip, *dst_ip;
-  struct ip iphdr;
-  struct tcphdr tcphdr;
-  uint8_t *src_mac, *dst_mac, *ether_frame;
-  uint8_t **options, *opt_buffer;
-  struct addrinfo hints, *res;
-  struct sockaddr_in *ipv4;
+  int sd,frame_length,bytes;
   struct sockaddr_ll device;
-  struct ifreq ifr;
-  void *tmp;
+  uint8_t *ether_frame;
 
-  ether_frame =
-
-  // Allocate memory for various arrays.
-  src_mac = allocate_ustrmem (6);
-  dst_mac = allocate_ustrmem (6);
   ether_frame = allocate_ustrmem (IP_MAXPACKET);
-  target = allocate_strmem (40);  ip_flags = allocate_intmem (4);
-  tcp_flags = allocate_intmem (8);
-  opt_len = allocate_intmem (10);
-  options = allocate_ustrmemp (10);
-  for (i=0; i<10; i++) {
-    options[i] = allocate_ustrmem (40);
-  }
-  opt_buffer = allocate_ustrmem (40);
 
-  // Submit request for a socket descriptor to look up interface.
-  if ((sd = socket (PF_PACKET, SOCK_RAW, htons (ETH_P_ALL))) < 0) {
-    perror ("socket() failed to get socket descriptor for using ioctl() ");
-    exit (EXIT_FAILURE);
-  }
-
-  // Use ioctl() to look up interface name and get its MAC address.
-  memset (&ifr, 0, sizeof (ifr));
-  snprintf (ifr.ifr_name, sizeof (ifr.ifr_name), "%s", interface);
-  if (ioctl (sd, SIOCGIFHWADDR, &ifr) < 0) {
-    perror ("ioctl() failed to get source MAC address ");
-    return (EXIT_FAILURE);
-  }
-  close (sd);
-
-  // Copy source MAC address.
-  memcpy (src_mac, ifr.ifr_hwaddr.sa_data, 6 * sizeof (uint8_t));
-
-  // Report source MAC address to stdout.
-  printf ("MAC address for interface %s is ", interface);
-  for (i=0; i<5; i++) {
-    printf ("%02x:", src_mac[i]);
-  }
-  printf ("%02x\n", src_mac[5]);
-
-  // Find interface index from interface name and store index in
-  // struct sockaddr_ll device, which will be used as an argument of sendto().
-  memset (&device, 0, sizeof (device));
-  if ((device.sll_ifindex = if_nametoindex (interface)) == 0) {
-    perror ("if_nametoindex() failed to obtain interface index ");
-    exit (EXIT_FAILURE);
-  }
-  printf ("Index for interface %s is %i\n", interface, device.sll_ifindex);
-
-  //
-  // Set destination MAC address: you need to fill these out
-  dst_mac[0] = DEST_MAC0;
-  dst_mac[1] = DEST_MAC1;
-  dst_mac[2] = DEST_MAC2;
-  dst_mac[3] = DEST_MAC3;
-  dst_mac[4] = DEST_MAC4;
-  dst_mac[5] = DEST_MAC5;
-
-  // Fill out hints for getaddrinfo().
-  memset (&hints, 0, sizeof (struct addrinfo));
-  hints.ai_family = AF_INET;
-  hints.ai_socktype = SOCK_STREAM;
-  hints.ai_flags = hints.ai_flags | AI_CANONNAME;
-
-  // Resolve target using getaddrinfo().
-  if ((status = getaddrinfo (target, NULL, &hints, &res)) != 0) {
-    fprintf (stderr, "getaddrinfo() failed: %s\n", gai_strerror (status));
-    exit (EXIT_FAILURE);
-  }
-  ipv4 = (struct sockaddr_in *) res->ai_addr;
-  tmp = &(ipv4->sin_addr);
-  if (inet_ntop (AF_INET, tmp, dst_ip, INET_ADDRSTRLEN) == NULL) {
-    status = errno;
-    fprintf (stderr, "inet_ntop() failed.\nError message: %s", strerror (status));
-    exit (EXIT_FAILURE);
-  }
-  freeaddrinfo (res);
-
-  // Fill out sockaddr_ll.
-  device.sll_family = AF_PACKET;
-  memcpy (device.sll_addr, src_mac, 6 * sizeof (uint8_t));
-  device.sll_halen = 6;
-
-  //×××××××××××××××××××××××
-  // Number of TCP options
-  nopt = 2;
-
-  // First TCP option - Maximum segment size
-  opt_len[0] = 0;
-  options[0][0] = 2u; opt_len[0]++;  // Option kind 2 = maximum segment size
-  options[0][1] = 4u; opt_len[0]++;  // This option kind is 4 bytes long
-  options[0][2] = 0x05u; opt_len[0]++;  // Set maximum segment size to 0x100 = 256
-  options[0][3] = 0xb4u; opt_len[0]++;
-
-  // Second TCP option - Multipath Capable
-  opt_len[1] = 0;
-  options[1][0] = 30u; opt_len[1]++;  // Option kind 30 = MPTCP
-  options[1][1] = 12u; opt_len[1]++;  // This option is 12 bytes long
-  options[1][2] = 0; opt_len[1]++;    // Set subtype: MPCAP(0) Version(0)
-  options[1][3] = 0x81u; opt_len[1]++;// Flags:10000001
-  options[1][4] = 0x53u; opt_len[1]++;// Set Sender's Key
-  options[1][5] = 0xddu; opt_len[1]++;
-  options[1][6] = 0x5au; opt_len[1]++;  
-  options[1][7] = 0x9fu; opt_len[1]++;
-  options[1][8] = 0x95u; opt_len[1]++;
-  options[1][9] = 0x31u; opt_len[1]++;
-  options[1][10] = 0x82u; opt_len[1]++;
-  options[1][11] = 0xc5u; opt_len[1]++;
-
-
-  // Copy all options into single options buffer.
-  buf_len = 0;
-  c = 0;  // index to opt_buffer
-  for (i=0; i<nopt; i++) {
-    memcpy (opt_buffer + c, options[i], opt_len[i] * sizeof (uint8_t));
-    c += opt_len[i];
-    buf_len += opt_len[i];
-  }
-
-  // Pad to the next 4-byte boundary.
-  while ((buf_len%4) != 0) {
-    opt_buffer[buf_len] = 0;
-    buf_len++;
-  }
-
-  // IPv4 header
-
-  // IPv4 header length (4 bits): Number of 32-bit words in header = 5
-  iphdr.ip_hl = IP4_HDRLEN / sizeof (uint32_t);
-
-  // Internet Protocol version (4 bits): IPv4
-  iphdr.ip_v = 4;
-
-  // Type of service (8 bits)
-  iphdr.ip_tos = 0;
-
-  // Total length of datagram (16 bits): IP header + TCP header + TCP options
-  iphdr.ip_len = htons (IP4_HDRLEN + TCP_HDRLEN + buf_len);
-
-  // ID sequence number (16 bits): unused, since single datagram
-  iphdr.ip_id = htons (0);
-
-  // Flags, and Fragmentation offset (3, 13 bits): 0 since single datagram
-
-  // Zero (1 bit)
-  ip_flags[0] = 0;
-
-  // Do not fragment flag (1 bit)
-  ip_flags[1] = 0;
-
-  // More fragments following flag (1 bit)
-  ip_flags[2] = 0;
-
-  // Fragmentation offset (13 bits)
-  ip_flags[3] = 0;
-
-  iphdr.ip_off = htons ((ip_flags[0] << 15)
-                      + (ip_flags[1] << 14)
-                      + (ip_flags[2] << 13)
-                      +  ip_flags[3]);
-
-  // Time-to-Live (8 bits): default to maximum value
-  iphdr.ip_ttl = 255;
-
-  // Transport layer protocol (8 bits): 6 for TCP
-  iphdr.ip_p = IPPROTO_TCP;
-
-  // Source IPv4 address (32 bits)
-  if ((status = inet_pton (AF_INET, src_ip, &(iphdr.ip_src))) != 1) {
-    fprintf (stderr, "inet_pton() failed.\nError message: %s", strerror (status));
-    exit (EXIT_FAILURE);
-  }
-
-  // Destination IPv4 address (32 bits)
-  if ((status = inet_pton (AF_INET, dst_ip, &(iphdr.ip_dst))) != 1) {
-    fprintf (stderr, "inet_pton() failed.\nError message: %s", strerror (status));
-    exit (EXIT_FAILURE);
-  }
-
-  // IPv4 header checksum (16 bits): set to 0 when calculating checksum
-  iphdr.ip_sum = 0;
-  iphdr.ip_sum = checksum ((uint16_t *) &iphdr, IP4_HDRLEN);
-
-
-  //××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××
-  // TCP header
-  
-  // Source port number (16 bits)
-  tcphdr.th_sport = htons (src_port);
-
-  // Destination port number (16 bits)
-  tcphdr.th_dport = htons (dst_port);
-
-  // Sequence number (32 bits)
-  tcphdr.th_seq = htonl (random() % 65535);
-
-  // Acknowledgement number (32 bits): 0 in first packet of SYN/ACK process
-  tcphdr.th_ack = htonl (0);
-
-  // Reserved (4 bits): should be 0
-  tcphdr.th_x2 = 0;
-
-  // Data offset (4 bits): size of TCP header + length of options, in 32-bit words
-  tcphdr.th_off = (TCP_HDRLEN  + buf_len) / 4;
-
-  // Flags (8 bits)
-
-  // FIN flag (1 bit)
-  tcp_flags[0] = 0;
-
-  // SYN flag (1 bit): set to 1
-  tcp_flags[1] = 1;
-
-  // RST flag (1 bit)
-  tcp_flags[2] = 0;
-
-  // PSH flag (1 bit)
-  tcp_flags[3] = 0;
-
-  // ACK flag (1 bit)
-  tcp_flags[4] = 0;
-
-  // URG flag (1 bit)
-  tcp_flags[5] = 0;
-
-  // ECE flag (1 bit)
-  tcp_flags[6] = 0;
-
-  // CWR flag (1 bit)
-  tcp_flags[7] = 0;
-
-  tcphdr.th_flags = 0;
-  for (i=0; i<8; i++) {
-    tcphdr.th_flags += (tcp_flags[i] << i);
-  }
-
-  // Window size (16 bits)
-  tcphdr.th_win = htons (65535);
-
-  // Urgent pointer (16 bits): 0 (only valid if URG flag is set)
-  tcphdr.th_urp = htons (0);
-
-  // TCP checksum (16 bits)
-  tcphdr.th_sum = tcp4_checksum (iphdr, tcphdr, opt_buffer, buf_len);
-
-  // Fill out ethernet frame header.
-
-  // Ethernet frame length = ethernet header (MAC + MAC + ethernet type) + ethernet data (IP header + TCP header + TCP options)
-  frame_length = 6 + 6 + 2 + IP4_HDRLEN + TCP_HDRLEN + buf_len;
-
-  // Destination and Source MAC addresses
-  memcpy (ether_frame, dst_mac, 6 * sizeof (uint8_t));
-  memcpy (ether_frame + 6, src_mac, 6 * sizeof (uint8_t));
-
-  // Next is ethernet type code (ETH_P_IP for IPv4).
-  // http://www.iana.org/assignments/ethernet-numbers
-  ether_frame[12] = ETH_P_IP / 256;
-  ether_frame[13] = ETH_P_IP % 256;
-
-  // Next is ethernet frame data (IPv4 header + TCP header).
-
-  // IPv4 header
-  memcpy (ether_frame + ETH_HDRLEN, &iphdr, IP4_HDRLEN * sizeof (uint8_t));
-
-  // TCP header
-  memcpy (ether_frame + ETH_HDRLEN + IP4_HDRLEN, &tcphdr, TCP_HDRLEN * sizeof (uint8_t));
-
-  // TCP Options
-  memcpy (ether_frame + ETH_HDRLEN + IP4_HDRLEN + TCP_HDRLEN, opt_buffer, buf_len * sizeof (uint8_t));
+  get_mptcp_capable_ether_frame(ether_frame,&device);
 
   // Submit request for a raw socket descriptor.
   if ((sd = socket (PF_PACKET, SOCK_RAW, htons (ETH_P_ALL))) < 0) {
@@ -370,24 +97,307 @@ main (int argc, char **argv)
   // Close socket descriptor.
   close (sd);
 
-  // Free allocated memory.
-  free (src_mac);
-  free (dst_mac);
   free (ether_frame);
-  free (target);
-  free (ip_flags);
-  free (tcp_flags);
-  free (opt_len);
-  for (i=0; i<10; i++) {
-    free (options[i]);
-  }
-  free (options);
-  free (opt_buffer);
 
   return (EXIT_SUCCESS);
 }
 
+int get_mptcp_capable_ether_frame(uint8_t *ether_frame,struct sockaddr_ll* device)
+{
+	int i, c, status, frame_length, sd, bytes, *ip_flags, *tcp_flags, nopt, *opt_len, buf_len;
+	char *target;
+	struct ip iphdr;
+	struct tcphdr tcphdr;
+	uint8_t *src_mac, *dst_mac;
+	uint8_t **options, *opt_buffer;
+	struct addrinfo hints, *res;
+	struct sockaddr_in *ipv4;
+	struct ifreq ifr;
+	void *tmp;
 
+	// Allocate memory for various arrays.
+	src_mac = allocate_ustrmem (6);
+	dst_mac = allocate_ustrmem (6);
+	target = allocate_strmem (40);	ip_flags = allocate_intmem (4);
+	tcp_flags = allocate_intmem (8);
+	opt_len = allocate_intmem (10);
+	options = allocate_ustrmemp (10);
+	for (i=0; i<10; i++) {
+	  options[i] = allocate_ustrmem (40);
+	}
+	opt_buffer = allocate_ustrmem (40);
+	
+	// Submit request for a socket descriptor to look up interface.
+	if ((sd = socket (PF_PACKET, SOCK_RAW, htons (ETH_P_ALL))) < 0) {
+	  perror ("socket() failed to get socket descriptor for using ioctl() ");
+	  exit (EXIT_FAILURE);
+	}
+	
+	// Use ioctl() to look up interface name and get its MAC address.
+	memset (&ifr, 0, sizeof (ifr));
+	snprintf (ifr.ifr_name, sizeof (ifr.ifr_name), "%s", interface);
+	if (ioctl (sd, SIOCGIFHWADDR, &ifr) < 0) {
+	  perror ("ioctl() failed to get source MAC address ");
+	  return (EXIT_FAILURE);
+	}
+	close (sd);
+	
+	// Copy source MAC address.
+	memcpy (src_mac, ifr.ifr_hwaddr.sa_data, 6 * sizeof (uint8_t));
+	
+	// Report source MAC address to stdout.
+	printf ("MAC address for interface %s is ", interface);
+	for (i=0; i<5; i++) {
+	  printf ("%02x:", src_mac[i]);
+	}
+	printf ("%02x\n", src_mac[5]);
+	
+	// Find interface index from interface name and store index in
+	// struct sockaddr_ll device, which will be used as an argument of sendto().
+	memset (&device, 0, sizeof (device));
+	if ((device.sll_ifindex = if_nametoindex (interface)) == 0) {
+	  perror ("if_nametoindex() failed to obtain interface index ");
+	  exit (EXIT_FAILURE);
+	}
+	printf ("Index for interface %s is %i\n", interface, device.sll_ifindex);
+	
+	//
+	// Set destination MAC address: you need to fill these out
+	dst_mac[0] = DEST_MAC0;
+	dst_mac[1] = DEST_MAC1;
+	dst_mac[2] = DEST_MAC2;
+	dst_mac[3] = DEST_MAC3;
+	dst_mac[4] = DEST_MAC4;
+	dst_mac[5] = DEST_MAC5;
+	
+	// Fill out hints for getaddrinfo().
+	memset (&hints, 0, sizeof (struct addrinfo));
+	hints.ai_family = AF_INET;
+	hints.ai_socktype = SOCK_STREAM;
+	hints.ai_flags = hints.ai_flags | AI_CANONNAME;
+	
+	// Resolve target using getaddrinfo().
+	if ((status = getaddrinfo (target, NULL, &hints, &res)) != 0) {
+	  fprintf (stderr, "getaddrinfo() failed: %s\n", gai_strerror (status));
+	  exit (EXIT_FAILURE);
+	}
+	ipv4 = (struct sockaddr_in *) res->ai_addr;
+	tmp = &(ipv4->sin_addr);
+	if (inet_ntop (AF_INET, tmp, dst_ip, INET_ADDRSTRLEN) == NULL) {
+	  status = errno;
+	  fprintf (stderr, "inet_ntop() failed.\nError message: %s", strerror (status));
+	  exit (EXIT_FAILURE);
+	}
+	freeaddrinfo (res);
+	
+	// Fill out sockaddr_ll.
+	device.sll_family = AF_PACKET;
+	memcpy (device.sll_addr, src_mac, 6 * sizeof (uint8_t));
+	device.sll_halen = 6;
+	
+	//×××××××××××××××××××××××
+	// Number of TCP options
+	nopt = 2;
+	
+	// First TCP option - Maximum segment size
+	opt_len[0] = 0;
+	options[0][0] = 2u; opt_len[0]++;  // Option kind 2 = maximum segment size
+	options[0][1] = 4u; opt_len[0]++;  // This option kind is 4 bytes long
+	options[0][2] = 0x05u; opt_len[0]++;  // Set maximum segment size to 0x100 = 256
+	options[0][3] = 0xb4u; opt_len[0]++;
+	
+	// Second TCP option - Multipath Capable
+	opt_len[1] = 0;
+	options[1][0] = 30u; opt_len[1]++;	// Option kind 30 = MPTCP
+	options[1][1] = 12u; opt_len[1]++;	// This option is 12 bytes long
+	options[1][2] = 0; opt_len[1]++;	// Set subtype: MPCAP(0) Version(0)
+	options[1][3] = 0x81u; opt_len[1]++;// Flags:10000001
+	options[1][4] = 0x53u; opt_len[1]++;// Set Sender's Key
+	options[1][5] = 0xddu; opt_len[1]++;
+	options[1][6] = 0x5au; opt_len[1]++;  
+	options[1][7] = 0x9fu; opt_len[1]++;
+	options[1][8] = 0x95u; opt_len[1]++;
+	options[1][9] = 0x31u; opt_len[1]++;
+	options[1][10] = 0x82u; opt_len[1]++;
+	options[1][11] = 0xc5u; opt_len[1]++;
+	
+	
+	// Copy all options into single options buffer.
+	buf_len = 0;
+	c = 0;	// index to opt_buffer
+	for (i=0; i<nopt; i++) {
+	  memcpy (opt_buffer + c, options[i], opt_len[i] * sizeof (uint8_t));
+	  c += opt_len[i];
+	  buf_len += opt_len[i];
+	}
+	
+	// Pad to the next 4-byte boundary.
+	while ((buf_len%4) != 0) {
+	  opt_buffer[buf_len] = 0;
+	  buf_len++;
+	}
+	
+	// IPv4 header
+	
+	// IPv4 header length (4 bits): Number of 32-bit words in header = 5
+	iphdr.ip_hl = IP4_HDRLEN / sizeof (uint32_t);
+	
+	// Internet Protocol version (4 bits): IPv4
+	iphdr.ip_v = 4;
+	
+	// Type of service (8 bits)
+	iphdr.ip_tos = 0;
+	
+	// Total length of datagram (16 bits): IP header + TCP header + TCP options
+	iphdr.ip_len = htons (IP4_HDRLEN + TCP_HDRLEN + buf_len);
+	
+	// ID sequence number (16 bits): unused, since single datagram
+	iphdr.ip_id = htons (0);
+	
+	// Flags, and Fragmentation offset (3, 13 bits): 0 since single datagram
+	
+	// Zero (1 bit)
+	ip_flags[0] = 0;
+	
+	// Do not fragment flag (1 bit)
+	ip_flags[1] = 0;
+	
+	// More fragments following flag (1 bit)
+	ip_flags[2] = 0;
+	
+	// Fragmentation offset (13 bits)
+	ip_flags[3] = 0;
+	
+	iphdr.ip_off = htons ((ip_flags[0] << 15)
+						+ (ip_flags[1] << 14)
+						+ (ip_flags[2] << 13)
+						+  ip_flags[3]);
+	
+	// Time-to-Live (8 bits): default to maximum value
+	iphdr.ip_ttl = 255;
+	
+	// Transport layer protocol (8 bits): 6 for TCP
+	iphdr.ip_p = IPPROTO_TCP;
+	
+	// Source IPv4 address (32 bits)
+	if ((status = inet_pton (AF_INET, src_ip, &(iphdr.ip_src))) != 1) {
+	  fprintf (stderr, "inet_pton() failed.\nError message: %s", strerror (status));
+	  exit (EXIT_FAILURE);
+	}
+	
+	// Destination IPv4 address (32 bits)
+	if ((status = inet_pton (AF_INET, dst_ip, &(iphdr.ip_dst))) != 1) {
+	  fprintf (stderr, "inet_pton() failed.\nError message: %s", strerror (status));
+	  exit (EXIT_FAILURE);
+	}
+	
+	// IPv4 header checksum (16 bits): set to 0 when calculating checksum
+	iphdr.ip_sum = 0;
+	iphdr.ip_sum = checksum ((uint16_t *) &iphdr, IP4_HDRLEN);
+	
+	
+	//××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××××
+	// TCP header
+	
+	// Source port number (16 bits)
+	tcphdr.th_sport = htons (src_port);
+	
+	// Destination port number (16 bits)
+	tcphdr.th_dport = htons (dst_port);
+	
+	// Sequence number (32 bits)
+	tcphdr.th_seq = htonl (random() % 65535);
+	
+	// Acknowledgement number (32 bits): 0 in first packet of SYN/ACK process
+	tcphdr.th_ack = htonl (0);
+	
+	// Reserved (4 bits): should be 0
+	tcphdr.th_x2 = 0;
+	
+	// Data offset (4 bits): size of TCP header + length of options, in 32-bit words
+	tcphdr.th_off = (TCP_HDRLEN  + buf_len) / 4;
+	
+	// Flags (8 bits)
+	
+	// FIN flag (1 bit)
+	tcp_flags[0] = 0;
+	
+	// SYN flag (1 bit): set to 1
+	tcp_flags[1] = 1;
+	
+	// RST flag (1 bit)
+	tcp_flags[2] = 0;
+	
+	// PSH flag (1 bit)
+	tcp_flags[3] = 0;
+	
+	// ACK flag (1 bit)
+	tcp_flags[4] = 0;
+	
+	// URG flag (1 bit)
+	tcp_flags[5] = 0;
+	
+	// ECE flag (1 bit)
+	tcp_flags[6] = 0;
+	
+	// CWR flag (1 bit)
+	tcp_flags[7] = 0;
+	
+	tcphdr.th_flags = 0;
+	for (i=0; i<8; i++) {
+	  tcphdr.th_flags += (tcp_flags[i] << i);
+	}
+	
+	// Window size (16 bits)
+	tcphdr.th_win = htons (65535);
+	
+	// Urgent pointer (16 bits): 0 (only valid if URG flag is set)
+	tcphdr.th_urp = htons (0);
+	
+	// TCP checksum (16 bits)
+	tcphdr.th_sum = tcp4_checksum (iphdr, tcphdr, opt_buffer, buf_len);
+	
+	// Fill out ethernet frame header.
+	
+	// Ethernet frame length = ethernet header (MAC + MAC + ethernet type) + ethernet data (IP header + TCP header + TCP options)
+	frame_length = 6 + 6 + 2 + IP4_HDRLEN + TCP_HDRLEN + buf_len;
+	
+	// Destination and Source MAC addresses
+	memcpy (ether_frame, dst_mac, 6 * sizeof (uint8_t));
+	memcpy (ether_frame + 6, src_mac, 6 * sizeof (uint8_t));
+	
+	// Next is ethernet type code (ETH_P_IP for IPv4).
+	// http://www.iana.org/assignments/ethernet-numbers
+	ether_frame[12] = ETH_P_IP / 256;
+	ether_frame[13] = ETH_P_IP % 256;
+	
+	// Next is ethernet frame data (IPv4 header + TCP header).
+	
+	// IPv4 header
+	memcpy (ether_frame + ETH_HDRLEN, &iphdr, IP4_HDRLEN * sizeof (uint8_t));
+	
+	// TCP header
+	memcpy (ether_frame + ETH_HDRLEN + IP4_HDRLEN, &tcphdr, TCP_HDRLEN * sizeof (uint8_t));
+	
+	// TCP Options
+	memcpy (ether_frame + ETH_HDRLEN + IP4_HDRLEN + TCP_HDRLEN, opt_buffer, buf_len * sizeof (uint8_t));
+	
+	// Free allocated memory.
+	free (src_mac);
+	free (dst_mac);
+//	free (ether_frame);
+	free (target);
+	free (ip_flags);
+	free (tcp_flags);
+	free (opt_len);
+	for (i=0; i<10; i++) {
+	  free (options[i]);
+	}
+	free (options);
+	free (opt_buffer);
+
+	return ether_frame;
+}
 
 
 // Computing the internet checksum (RFC 1071).
