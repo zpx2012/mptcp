@@ -44,22 +44,24 @@
 //××××××××××××××
 //Variables need to be setted
 #define interface "wlp6s0" 
-#define src_ip "192.168.1.133"
+#define src_ip "10.25.15.113"
 #define dst_ip "130.104.230.45"
 #define src_port 60
 #define dst_port 80
-#define DEST_MAC0
-#define DEST_MAC1
-#define DEST_MAC2
-#define DEST_MAC3
-#define DEST_MAC4
-#define DEST_MAC5
+#define DEST_MAC0 0x44 
+#define DEST_MAC1 0x94
+#define DEST_MAC2 0xfc
+#define DEST_MAC3 0x73
+#define DEST_MAC4 0xd2
+#define DEST_MAC5 0xf1
+
+
 
 // Define some constants.
 #define ETH_HDRLEN 14  // Ethernet header length
 #define IP4_HDRLEN 20  // IPv4 header length
 #define TCP_HDRLEN 20  // TCP header length, excludes options data
-
+#define KEY_LEN 8
 // Function prototypes
 uint16_t checksum (uint16_t *, int);
 uint16_t tcp4_checksum (struct ip, struct tcphdr, uint8_t *, int);
@@ -68,28 +70,183 @@ char **allocate_strmemp (int);
 uint8_t *allocate_ustrmem (int);
 uint8_t **allocate_ustrmemp (int);
 int *allocate_intmem (int);
-int get_mptcp_capable_ether_frame(uint8_t *ether_frame,struct sockaddr_ll* device);
+struct ip *get_iphdr(uint8_t*);
+struct tcphdr *get_tcphdr(uint8_t*);
+
+
+int send_mpcap_syn_ether_frame(uint8_t *ether_frame,int *frame_length,struct sockaddr_ll* device);
+int send_ether_frame(uint8_t* ether_frame,int frame_length,struct sockaddr_ll* device);
+int recv_mpcap_synack_ether_frame(uint8_t *recv_ether_frame);
+int send_mpcap_ack_ether_frame(uint8_t* mpcap_syn_ether_frame,int mpcap_syn_frame_length,uint8_t* mpcap_synack_ether_frame,struct sockaddr_ll* device);
 
 
 int
 main (int argc, char **argv)
 {
-  int sd,frame_length,bytes;
+  int mpcap_syn_frame_length;
   struct sockaddr_ll device;
-  uint8_t *ether_frame;
+  uint8_t *mpcap_syn_ether_frame,*mpcap_synack_ether_frame;
 
-  ether_frame = allocate_ustrmem (IP_MAXPACKET);
+  mpcap_syn_ether_frame = allocate_ustrmem (IP_MAXPACKET);
+  mpcap_synack_ether_frame = allocate_ustrmem (IP_MAXPACKET);
 
-  get_mptcp_capable_ether_frame(ether_frame,&device);
+  //first handshake
+  send_mpcap_syn_ether_frame(mpcap_syn_ether_frame,&mpcap_syn_frame_length,&device);
+  
+  //second handshake
+  recv_mpcap_synack_ether_frame(mpcap_synack_ether_frame);
 
-  // Submit request for a raw socket descriptor.
+  //third handshake
+  send_mpcap_ack_ether_frame(mpcap_syn_ether_frame,mpcap_syn_frame_length,mpcap_synack_ether_frame,&device);
+
+
+  free(mpcap_syn_ether_frame);
+  free(mpcap_synack_ether_frame);
+
+  return (EXIT_SUCCESS);
+}
+
+int send_mpcap_ack_ether_frame(uint8_t* mpcap_syn_ether_frame,int mpcap_syn_frame_length,uint8_t* mpcap_synack_ether_frame,struct sockaddr_ll* device)
+{
+	uint8_t* server_key,*opt_buffer_ack;
+	struct ip *syn_iphdr;
+	struct tcphdr *syn_tcphdr,*synack_tcphdr;
+	int *tcp_flags;
+	int i,opt_len_syn = 16;
+
+	tcp_flags = allocate_intmem (8);
+	opt_buffer_ack = allocate_ustrmem (opt_len_syn + KEY_LEN);
+	
+	syn_iphdr = get_iphdr(mpcap_syn_ether_frame);
+	syn_tcphdr = get_tcphdr(mpcap_syn_ether_frame);
+	synack_tcphdr = get_tcphdr(mpcap_synack_ether_frame);
+
+	// Cast server_key
+	server_key = (uint8_t*)(mpcap_synack_ether_frame + mpcap_syn_frame_length - KEY_LEN);
+
+	//Modify syn frame to ack frame
+
+	//IP level
+	//Total length of IP datagram (16 bits)
+	syn_iphdr->ip_len = htons (IP4_HDRLEN + TCP_HDRLEN + opt_len_syn + KEY_LEN);
+	syn_iphdr->ip_sum = checksum ((uint16_t *) &syn_iphdr, IP4_HDRLEN);
+
+	//TCP level
+	// Data offset (4 bits): size of TCP header + length of options, in 32-bit words
+	syn_tcphdr->th_off = (TCP_HDRLEN  + opt_len_syn + KEY_LEN) / 4;
+	printf("synack_tcphdr->th_seq:%x\nntohl(synack_tcphdr->th_seq):%x\nntohl(synack_tcphdr->th_seq)+1:%x\nhtonl(ntohl(synack_tcphdr->th_seq)+1):%x\n", \
+		    synack_tcphdr->th_seq,    ntohl(synack_tcphdr->th_seq),    ntohl(synack_tcphdr->th_seq)+1,    htonl(ntohl(synack_tcphdr->th_seq)+1));
+	syn_tcphdr->th_ack = htonl(ntohl(synack_tcphdr->th_seq) + 1);
+	// Flags (8 bits)	
+	// FIN flag (1 bit)
+	tcp_flags[0] = 0;
+	
+	// SYN flag (1 bit): set to 1
+	tcp_flags[1] = 0;
+	
+	// RST flag (1 bit)
+	tcp_flags[2] = 0;
+	
+	// PSH flag (1 bit)
+	tcp_flags[3] = 0;
+	
+	// ACK flag (1 bit)
+	tcp_flags[4] = 1;
+	
+	// URG flag (1 bit)
+	tcp_flags[5] = 0;
+	
+	// ECE flag (1 bit)
+	tcp_flags[6] = 0;
+	
+	// CWR flag (1 bit)
+	tcp_flags[7] = 0;
+	
+	syn_tcphdr->th_flags = 0;
+	for (i=0; i<8; i++) {
+	  syn_tcphdr->th_flags += (tcp_flags[i] << i);
+	}
+
+	memcpy(opt_buffer_ack,syn_tcphdr + TCP_HDRLEN, opt_len_syn * sizeof(uint8_t));
+	memcpy(opt_buffer_ack + opt_len_syn, server_key, KEY_LEN * sizeof(uint8_t));
+	printf("opt_buffer_ack:%x\n opt_buffer_ack[5]:%x\n opt_buffer_ack + opt_len_syn:%x\n", opt_buffer_ack,&opt_buffer_ack[5],opt_buffer_ack+opt_len_syn);
+	opt_buffer_ack[5] = 20u;
+	syn_tcphdr->th_sum = tcp4_checksum (*syn_iphdr, *syn_tcphdr, opt_buffer_ack, opt_len_syn + KEY_LEN);
+
+	// Patch Server key
+	memcpy (mpcap_syn_ether_frame + mpcap_syn_frame_length, server_key, KEY_LEN * sizeof (uint8_t));
+	
+	send_ether_frame(mpcap_syn_ether_frame,mpcap_syn_frame_length + KEY_LEN, device);
+
+	return 1;
+}
+
+
+int recv_mpcap_synack_ether_frame(uint8_t *recv_ether_frame)
+{
+	int recvsd,bytes,status;
+	struct ip *recv_iphdr;
+	struct tcphdr* recv_tcphdr;
+
+	// Submit request for a raw socket descriptor to receive packets.
+	if ((recvsd = socket (PF_PACKET, SOCK_RAW, htons (ETH_P_ALL))) < 0) {
+	  perror ("socket() failed ");
+	  exit (EXIT_FAILURE);
+	}
+
+
+	// Cast recv_iphdr as pointer to ip header within received ethernet frame.
+	recv_iphdr = (struct ip *) (recv_ether_frame + ETH_HDRLEN);
+
+	// Cast recv_tcphdr as pointer to tcp header within received ethernet frame.
+	recv_tcphdr = (struct tcphdr *) (recv_ether_frame + ETH_HDRLEN + IP4_HDRLEN);
+
+	// RECEIVE LOOP
+    for (;;) {
+
+      memset (recv_ether_frame, 0, IP_MAXPACKET * sizeof (uint8_t));
+      if ((bytes = recv(recvsd, recv_ether_frame, IP_MAXPACKET, 0)) < 0) {
+
+        status = errno;
+
+        // Deal with error conditions first.
+        if (status == EAGAIN) {  // EAGAIN = 11
+          perror ("recvfrom() failed ");
+          exit (EXIT_FAILURE);
+        //  break;  // Break out of Receive loop.
+        } else if (status == EINTR) {  // EINTR = 4
+          continue;  // Something weird happened, but let's keep listening.
+        } else {
+          perror ("recvfrom() failed ");
+          exit (EXIT_FAILURE);
+        }
+      }  // End of error handling conditionals.
+
+      printf("ip_src.s_addr:%x\ndst_ip:%x\n", recv_iphdr->ip_src.s_addr,inet_addr(dst_ip));
+
+      // Check for an IP ethernet frame. If not, ignore and keep listening.
+      if ((recv_iphdr->ip_p == IPPROTO_TCP) && (inet_addr(dst_ip) == recv_iphdr->ip_src.s_addr) && 
+      	  (htons(dst_port) == recv_tcphdr->th_sport) && (htons(src_port) == recv_tcphdr->th_dport)){
+      		printf("th_ack:%x\n", recv_tcphdr->th_ack);
+      		break;
+      } 
+    }  // End of Receive loop.
+    return 1;
+}
+
+
+int send_ether_frame(uint8_t* ether_frame,int frame_length,struct sockaddr_ll* device)
+{
+  int sd,bytes;
+
+ // Submit request for a raw socket descriptor.
   if ((sd = socket (PF_PACKET, SOCK_RAW, htons (ETH_P_ALL))) < 0) {
     perror ("socket() failed ");
     exit (EXIT_FAILURE);
   }
 
   // Send ethernet frame to socket.
-  if ((bytes = sendto (sd, ether_frame, frame_length, 0, (struct sockaddr *) &device, sizeof (device))) <= 0) {
+  if ((bytes = sendto (sd, ether_frame, frame_length, 0, (struct sockaddr *) device, sizeof (*device))) <= 0) {
     perror ("sendto() failed");
     exit (EXIT_FAILURE);
   }
@@ -97,15 +254,15 @@ main (int argc, char **argv)
   // Close socket descriptor.
   close (sd);
 
-  free (ether_frame);
+  return 1;
 
-  return (EXIT_SUCCESS);
 }
 
-int get_mptcp_capable_ether_frame(uint8_t *ether_frame,struct sockaddr_ll* device)
+
+int send_mpcap_syn_ether_frame(uint8_t *ether_frame,int *frame_length,struct sockaddr_ll* device)
 {
-	int i, c, status, frame_length, sd, bytes, *ip_flags, *tcp_flags, nopt, *opt_len, buf_len;
-	char *target;
+	int i, c, status, sd, bytes, *ip_flags, *tcp_flags, nopt, *opt_len, buf_len;
+//	char *dst_ip;
 	struct ip iphdr;
 	struct tcphdr tcphdr;
 	uint8_t *src_mac, *dst_mac;
@@ -118,7 +275,7 @@ int get_mptcp_capable_ether_frame(uint8_t *ether_frame,struct sockaddr_ll* devic
 	// Allocate memory for various arrays.
 	src_mac = allocate_ustrmem (6);
 	dst_mac = allocate_ustrmem (6);
-	target = allocate_strmem (40);	ip_flags = allocate_intmem (4);
+	ip_flags = allocate_intmem (4);
 	tcp_flags = allocate_intmem (8);
 	opt_len = allocate_intmem (10);
 	options = allocate_ustrmemp (10);
@@ -154,14 +311,13 @@ int get_mptcp_capable_ether_frame(uint8_t *ether_frame,struct sockaddr_ll* devic
 	
 	// Find interface index from interface name and store index in
 	// struct sockaddr_ll device, which will be used as an argument of sendto().
-	memset (&device, 0, sizeof (device));
-	if ((device.sll_ifindex = if_nametoindex (interface)) == 0) {
+	memset (device, 0, sizeof (*device));
+	if ((device->sll_ifindex = if_nametoindex (interface)) == 0) {
 	  perror ("if_nametoindex() failed to obtain interface index ");
 	  exit (EXIT_FAILURE);
 	}
-	printf ("Index for interface %s is %i\n", interface, device.sll_ifindex);
+	printf ("Index for interface %s is %i\n", interface, device->sll_ifindex);
 	
-	//
 	// Set destination MAC address: you need to fill these out
 	dst_mac[0] = DEST_MAC0;
 	dst_mac[1] = DEST_MAC1;
@@ -176,24 +332,10 @@ int get_mptcp_capable_ether_frame(uint8_t *ether_frame,struct sockaddr_ll* devic
 	hints.ai_socktype = SOCK_STREAM;
 	hints.ai_flags = hints.ai_flags | AI_CANONNAME;
 	
-	// Resolve target using getaddrinfo().
-	if ((status = getaddrinfo (target, NULL, &hints, &res)) != 0) {
-	  fprintf (stderr, "getaddrinfo() failed: %s\n", gai_strerror (status));
-	  exit (EXIT_FAILURE);
-	}
-	ipv4 = (struct sockaddr_in *) res->ai_addr;
-	tmp = &(ipv4->sin_addr);
-	if (inet_ntop (AF_INET, tmp, dst_ip, INET_ADDRSTRLEN) == NULL) {
-	  status = errno;
-	  fprintf (stderr, "inet_ntop() failed.\nError message: %s", strerror (status));
-	  exit (EXIT_FAILURE);
-	}
-	freeaddrinfo (res);
-	
 	// Fill out sockaddr_ll.
-	device.sll_family = AF_PACKET;
-	memcpy (device.sll_addr, src_mac, 6 * sizeof (uint8_t));
-	device.sll_halen = 6;
+	device->sll_family = AF_PACKET;
+	memcpy (device->sll_addr, src_mac, 6 * sizeof (uint8_t));
+	device->sll_halen = 6;
 	
 	//×××××××××××××××××××××××
 	// Number of TCP options
@@ -219,7 +361,7 @@ int get_mptcp_capable_ether_frame(uint8_t *ether_frame,struct sockaddr_ll* devic
 	options[1][8] = 0x95u; opt_len[1]++;
 	options[1][9] = 0x31u; opt_len[1]++;
 	options[1][10] = 0x82u; opt_len[1]++;
-	options[1][11] = 0xc5u; opt_len[1]++;
+	options[1][11] = 0xc9u; opt_len[1]++;
 	
 	
 	// Copy all options into single options buffer.
@@ -284,7 +426,7 @@ int get_mptcp_capable_ether_frame(uint8_t *ether_frame,struct sockaddr_ll* devic
 	  fprintf (stderr, "inet_pton() failed.\nError message: %s", strerror (status));
 	  exit (EXIT_FAILURE);
 	}
-	
+
 	// Destination IPv4 address (32 bits)
 	if ((status = inet_pton (AF_INET, dst_ip, &(iphdr.ip_dst))) != 1) {
 	  fprintf (stderr, "inet_pton() failed.\nError message: %s", strerror (status));
@@ -307,6 +449,7 @@ int get_mptcp_capable_ether_frame(uint8_t *ether_frame,struct sockaddr_ll* devic
 	
 	// Sequence number (32 bits)
 	tcphdr.th_seq = htonl (random() % 65535);
+	printf("th_seq:%d\n", tcphdr.th_seq);
 	
 	// Acknowledgement number (32 bits): 0 in first packet of SYN/ACK process
 	tcphdr.th_ack = htonl (0);
@@ -317,8 +460,7 @@ int get_mptcp_capable_ether_frame(uint8_t *ether_frame,struct sockaddr_ll* devic
 	// Data offset (4 bits): size of TCP header + length of options, in 32-bit words
 	tcphdr.th_off = (TCP_HDRLEN  + buf_len) / 4;
 	
-	// Flags (8 bits)
-	
+	// Flags (8 bits)	
 	// FIN flag (1 bit)
 	tcp_flags[0] = 0;
 	
@@ -360,7 +502,7 @@ int get_mptcp_capable_ether_frame(uint8_t *ether_frame,struct sockaddr_ll* devic
 	// Fill out ethernet frame header.
 	
 	// Ethernet frame length = ethernet header (MAC + MAC + ethernet type) + ethernet data (IP header + TCP header + TCP options)
-	frame_length = 6 + 6 + 2 + IP4_HDRLEN + TCP_HDRLEN + buf_len;
+	*frame_length = 6 + 6 + 2 + IP4_HDRLEN + TCP_HDRLEN + buf_len;
 	
 	// Destination and Source MAC addresses
 	memcpy (ether_frame, dst_mac, 6 * sizeof (uint8_t));
@@ -382,11 +524,12 @@ int get_mptcp_capable_ether_frame(uint8_t *ether_frame,struct sockaddr_ll* devic
 	// TCP Options
 	memcpy (ether_frame + ETH_HDRLEN + IP4_HDRLEN + TCP_HDRLEN, opt_buffer, buf_len * sizeof (uint8_t));
 	
+    send_ether_frame(ether_frame,*frame_length,device);
+
 	// Free allocated memory.
 	free (src_mac);
 	free (dst_mac);
-//	free (ether_frame);
-	free (target);
+///	free (dst_ip);
 	free (ip_flags);
 	free (tcp_flags);
 	free (opt_len);
@@ -396,7 +539,7 @@ int get_mptcp_capable_ether_frame(uint8_t *ether_frame,struct sockaddr_ll* devic
 	free (options);
 	free (opt_buffer);
 
-	return ether_frame;
+	return 1;
 }
 
 
@@ -607,4 +750,16 @@ allocate_intmem (int len)
     fprintf (stderr, "ERROR: Cannot allocate memory for array allocate_intmem().\n");
     exit (EXIT_FAILURE);
   }
+}
+
+struct tcphdr *
+get_tcphdr(uint8_t* ether_frame)
+{
+	return (struct tcphdr *) (ether_frame + ETH_HDRLEN + IP4_HDRLEN);
+}
+
+struct  ip *
+get_iphdr(uint8_t* ether_frame)
+{
+	return (struct ip *) (ether_frame + ETH_HDRLEN);
 }
