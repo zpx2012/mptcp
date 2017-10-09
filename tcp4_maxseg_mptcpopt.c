@@ -43,17 +43,17 @@
 
 //××××××××××××××
 //Variables need to be setted
-#define interface "wlp6s0" 
-#define src_ip "10.25.15.113"
+#define interface "eth0" 
+#define src_ip "169.235.31.179"
 #define dst_ip "130.104.230.45"
 #define src_port 60
 #define dst_port 80
-#define DEST_MAC0 0x44 
-#define DEST_MAC1 0x94
-#define DEST_MAC2 0xfc
-#define DEST_MAC3 0x73
-#define DEST_MAC4 0xd2
-#define DEST_MAC5 0xf1
+#define DEST_MAC0 0x00 
+#define DEST_MAC1 0x00
+#define DEST_MAC2 0x5e
+#define DEST_MAC3 0x00
+#define DEST_MAC4 0x01
+#define DEST_MAC5 0x01
 
 
 
@@ -167,14 +167,17 @@ int send_mpcap_ack_ether_frame(uint8_t* mpcap_syn_ether_frame,int mpcap_syn_fram
 	  syn_tcphdr->th_flags += (tcp_flags[i] << i);
 	}
 
-	memcpy(opt_buffer_ack,syn_tcphdr + TCP_HDRLEN, opt_len_syn * sizeof(uint8_t));
+	memcpy(opt_buffer_ack,mpcap_syn_ether_frame + ETH_HDRLEN + IP4_HDRLEN + TCP_HDRLEN, opt_len_syn * sizeof(uint8_t));
 	memcpy(opt_buffer_ack + opt_len_syn, server_key, KEY_LEN * sizeof(uint8_t));
-	printf("opt_buffer_ack:%x\n opt_buffer_ack[5]:%x\n opt_buffer_ack + opt_len_syn:%x\n", opt_buffer_ack,&opt_buffer_ack[5],opt_buffer_ack+opt_len_syn);
+	printf("opt_buffer_ack:%x\n&opt_buffer_ack[5]:%x\nopt_buffer_ack[5]:%x\nopt_buffer_ack + opt_len_syn:%x\n", opt_buffer_ack,&opt_buffer_ack[5],opt_buffer_ack[5],opt_buffer_ack+opt_len_syn);
 	opt_buffer_ack[5] = 20u;
+	for(i=0;i<opt_len_syn+KEY_LEN;i++){
+		printf("%x:%d ", opt_buffer_ack[i],i);
+	}
 	syn_tcphdr->th_sum = tcp4_checksum (*syn_iphdr, *syn_tcphdr, opt_buffer_ack, opt_len_syn + KEY_LEN);
 
 	// Patch Server key
-	memcpy (mpcap_syn_ether_frame + mpcap_syn_frame_length, server_key, KEY_LEN * sizeof (uint8_t));
+	memcpy (mpcap_syn_ether_frame + ETH_HDRLEN + IP4_HDRLEN + TCP_HDRLEN, opt_buffer_ack, (opt_len_syn + KEY_LEN) * sizeof (uint8_t));
 	
 	send_ether_frame(mpcap_syn_ether_frame,mpcap_syn_frame_length + KEY_LEN, device);
 
