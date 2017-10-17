@@ -44,13 +44,14 @@
 
 //××××××××××××××
 //Variables need to be setted
-#define src_ip "10.25.15.105"
+#define src_ip "169.235.31.250"
 #define dst_ip "130.104.230.45"
-#define src_port 61
+#define src_port 52568
 #define dst_port 80
-#define sender_key_str "0075772d5f601af6"
+#define sender_key_str 0x5f6257d35e39d48a 
 //#define rcvv_key "a12643db3bba0a83"
 #define http_frame_str "474554202f66616c6f6e67676f6e6720485454502f312e310d0a486f73743a206d756c7469706174682d7463702e6f72670d0a436f6e6e656374696f6e3a206b6565702d616c6976650d0a557067726164652d496e7365637572652d52657175657374733a20310d0a557365722d4167656e743a204d6f7a696c6c612f352e3020285831313b204c696e7578207838365f363429204170706c655765624b69742f3533372e333620284b48544d4c2c206c696b65204765636b6f29205562756e7475204368726f6d69756d2f36312e302e333136332e313030204368726f6d652f36312e302e333136332e313030205361666172692f3533372e33360d0a4163636570743a20746578742f68746d6c2c6170706c69636174696f6e2f7868746d6c2b786d6c2c6170706c69636174696f6e2f786d6c3b713d302e392c696d6167652f776562702c696d6167652f61706e672c2a2f2a3b713d302e380d0a4163636570742d456e636f64696e673a20677a69702c206465666c6174650d0a4163636570742d4c616e67756167653a207a682d434e2c7a683b713d302e380d0a0d0a"
+
 
 // Define some constants.
 #define ETH_HDRLEN 14  // Ethernet header length
@@ -70,6 +71,14 @@ struct mp_dss {
 	__u16	data_len;
 	__u16	dss_csum;
 };
+
+struct  mp_cap {
+	__u8 kind;
+	__u8 len;
+	__u8 subtype_version;
+	__u8 flags;
+	uint64_t key;
+}__attribute__((__packed__));
 
 // Function prototypes
 uint16_t checksum (uint16_t *, int);
@@ -110,16 +119,16 @@ main (int argc, char **argv)
 
 
 	uint64_t key,idsn;
-//	uint32_t token;
-	sscanf(rcvv_key,"%lx",&key);
-	printf("%lx\n",key);
+//	sscanf(rcvv_key,"%16lx",&key);
+	key = 0x993b96e2d844250e;//LE
+	printf("%16lx\n",key);
 	mptcp_key_sha1(key,NULL,&idsn);
-	printf("key:\nidsn:%lx\nntohll(idsn):%lx\n,htonll(idsn):%lx\n",idsn,ntohll(idsn),htonll(idsn));
+	printf("key:\nidsn:%16lx\nntohll(idsn):%16lx\n,htonll(idsn):%16lx\n",idsn,ntohll(idsn),htonll(idsn));
 
-	mptcp_key_sha1(ntohll(key),NULL,&idsn);
-	printf("ntohll(key):\nidsn:%lx\nntohll(idsn):%lx\n",idsn,ntohll(idsn));
-
+	mptcp_key_sha1(ntohll(key),NULL,&idsn);//BE
+	printf("ntohll(key):\nidsn:%16lx\nntohll(idsn):%16lx\n",idsn,ntohll(idsn));
 */
+
 
 
 	int mpcap_syn_frame_length;
@@ -156,7 +165,7 @@ int send_mpcap_ack_ether_frame(uint8_t* mpcap_syn_ether_frame,int mpcap_syn_fram
 	struct ip *syn_iphdr;
 	struct tcphdr *syn_tcphdr,*synack_tcphdr;
 	int *tcp_flags;
-	int i,opt_syn_len = 16,opt_ack_len;
+	int i,opt_syn_len = 12,opt_ack_len;
 
 	struct mp_dss mp_dss;
 	uint64_t key,idsn,*rcv_key;
@@ -175,7 +184,7 @@ int send_mpcap_ack_ether_frame(uint8_t* mpcap_syn_ether_frame,int mpcap_syn_fram
 	synack_tcphdr = get_tcphdr(mpcap_synack_ether_frame + ETH_HDRLEN);
 
 	// Cast rcv_key
-	rcv_key = (uint64_t*)(mpcap_synack_ether_frame + ETH_HDRLEN + mpcap_syn_frame_length - KEY_LEN);
+	rcv_key = (uint64_t*)(mpcap_synack_ether_frame + ETH_HDRLEN + mpcap_syn_frame_length + 4 - KEY_LEN);
 	printf("%llx\n", *rcv_key);
 	//Modify syn frame to ack frame
 
@@ -186,9 +195,12 @@ int send_mpcap_ack_ether_frame(uint8_t* mpcap_syn_ether_frame,int mpcap_syn_fram
 
 	//TCP level
 	// Data offset (4 bits): size of TCP header + length of options, in 32-bit words
-
 	syn_tcphdr->th_ack = htonl(ntohl(synack_tcphdr->th_seq) + 1);
 	syn_tcphdr->th_seq = synack_tcphdr->th_ack;
+
+	// Window size (16 bits)
+	syn_tcphdr->th_win = htons (29312);
+
 	
 	// Flags (8 bits)	
 	// FIN flag (1 bit)
@@ -227,10 +239,11 @@ int send_mpcap_ack_ether_frame(uint8_t* mpcap_syn_ether_frame,int mpcap_syn_fram
 	mp_dss.sub = 0x20u;
 	mp_dss.flags = 0x01u;
 	mptcp_key_sha1(*rcv_key,NULL,&idsn);
-	printf("rcv_key:%lx\nidsn:%lx\nntohll(idsn):%lx\n",*rcv_key,idsn,ntohll(idsn));
+	printf("rcv_key:%16lx\nidsn:%16lx\nntohll(idsn):%16lx\n",*rcv_key,idsn,ntohll(idsn));
 	idsn = ntohll(idsn) + 1;
-	mp_dss.data_ack = (__u32)idsn;
-	printf("mp_dss.data_ack%lx\n", mp_dss.data_ack);
+	idsn = (__u32)idsn;
+	mp_dss.data_ack = ntohl(idsn); 
+	printf("mp_dss.data_ack%16lx\n", mp_dss.data_ack);
 
 	opt_ack_len = opt_syn_len + KEY_LEN + mp_dss.len;
 	syn_iphdr->ip_len = htons (IP4_HDRLEN + TCP_HDRLEN + opt_ack_len);
@@ -240,7 +253,7 @@ int send_mpcap_ack_ether_frame(uint8_t* mpcap_syn_ether_frame,int mpcap_syn_fram
 	memcpy(opt_ack_buff,mpcap_syn_ether_frame + IP4_HDRLEN + TCP_HDRLEN, opt_syn_len * sizeof(uint8_t));
 	memcpy(opt_ack_buff + opt_syn_len, rcv_key, KEY_LEN * sizeof(uint8_t));
 	memcpy(opt_ack_buff + opt_syn_len + KEY_LEN, &mp_dss, mp_dss.len *sizeof(uint8_t));
-	opt_ack_buff[5] = 20u;
+	opt_ack_buff[1] = 20u;
 	syn_tcphdr->th_sum = tcp4_checksum (*syn_iphdr, *syn_tcphdr, opt_ack_buff, opt_ack_len);
 	//Patch opt_ack_buff
 	memcpy (mpcap_syn_ether_frame + IP4_HDRLEN + TCP_HDRLEN, opt_ack_buff, opt_ack_len * sizeof (uint8_t));
@@ -254,11 +267,14 @@ int send_mpcap_ack_ether_frame(uint8_t* mpcap_syn_ether_frame,int mpcap_syn_fram
 
 	mp_dss.len = 20;
 	mp_dss.flags = 0x05u;
-	sscanf(sender_key_str,"%lx",&key);
+//	sscanf(sender_key_str,"%16lx",&key);
+	key = sender_key_str;
+	idsn = 0;
 	mptcp_key_sha1(ntohll(key),NULL,&idsn);
 	idsn = ntohll(idsn) + 1;
-	mp_dss.data_seq = (__u32)idsn;
-	printf("mp_dss.data_seq%lx\n", mp_dss.data_seq);
+	idsn = (__u32)idsn;
+	mp_dss.data_seq = htonl(idsn);
+	printf("mp_dss.data_seq%16lx\n", mp_dss.data_seq);
 	mp_dss.sub_seq = htonl(1);
 	mp_dss.data_len = htons(http_len);
 	mp_dss.dss_csum = 0x7ab6;
@@ -394,16 +410,20 @@ int send_mpcap_syn_ether_frame(uint8_t *ether_frame,int *frame_length)
 	
 	//×××××××××××××××××××××××
 	// Number of TCP options
-	nopt = 2;
 	
 	// First TCP option - Maximum segment size
+/*
 	opt_len[0] = 0;
 	options[0][0] = 2u; opt_len[0]++;  // Option kind 2 = maximum segment size
 	options[0][1] = 4u; opt_len[0]++;  // This option kind is 4 bytes long
 	options[0][2] = 0x05u; opt_len[0]++;  // Set maximum segment size to 0x100 = 256
 	options[0][3] = 0xb4u; opt_len[0]++;
-	
+*/	
+
+
+
 	// Second TCP option - Multipath Capable
+/*
 	opt_len[1] = 0;
 	options[1][0] = 30u; opt_len[1]++;	// Option kind 30 = MPTCP
 	options[1][1] = 12u; opt_len[1]++;	// This option is 12 bytes long
@@ -417,22 +437,19 @@ int send_mpcap_syn_ether_frame(uint8_t *ether_frame,int *frame_length)
 	options[1][9] = 0x31u; opt_len[1]++;
 	options[1][10] = 0x82u; opt_len[1]++;
 	options[1][11] = 0xc9u; opt_len[1]++;
-	
-	
+*/	
+	struct mp_cap mp_cap;
+	mp_cap.kind = 30;
+	mp_cap.len = 12;
+	mp_cap.subtype_version = 0;
+	mp_cap.flags = 0x81u;
+	mp_cap.key = htonll(sender_key_str);
+	printf("%d\n", sizeof(mp_cap));
+
 	// Copy all options into single options buffer.
-	buf_len = 0;
-	c = 0;	// index to opt_buffer
-	for (i=0; i<nopt; i++) {
-		memcpy (opt_buffer + c, options[i], opt_len[i] * sizeof (uint8_t));
-		c += opt_len[i];
-		buf_len += opt_len[i];
-	}
+	buf_len = mp_cap.len;
+	memcpy (opt_buffer, &mp_cap, buf_len * sizeof (uint8_t));
 	
-	// Pad to the next 4-byte boundary.
-	while ((buf_len%4) != 0) {
-		opt_buffer[buf_len] = 0;
-		buf_len++;
-	}
 	
 	// IPv4 header
 	
@@ -546,7 +563,7 @@ int send_mpcap_syn_ether_frame(uint8_t *ether_frame,int *frame_length)
 	}
 	
 	// Window size (16 bits)
-	tcphdr.th_win = htons (65535);
+	tcphdr.th_win = htons (29200);
 	
 	// Urgent pointer (16 bits): 0 (only valid if URG flag is set)
 	tcphdr.th_urp = htons (0);
