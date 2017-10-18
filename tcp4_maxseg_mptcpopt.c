@@ -45,14 +45,14 @@
 
 //××××××××××××××
 //Variables need to be setted
-#define src_ip "169.235.31.238"
+#define src_ip "169.235.31.234"
 #define dst_ip "130.104.230.45"
-#define src_port 30120
+#define src_port 30123
 #define dst_port 80
 #define sender_key_str 0x5f6257d35e39d48a 
 //#define rcvv_key "a12643db3bba0a83"
 #define http_frame_str "474554202f66616c6f6e67676f6e6720485454502f312e310d0a486f73743a206d756c7469706174682d7463702e6f72670d0a436f6e6e656374696f6e3a206b6565702d616c6976650d0a557067726164652d496e7365637572652d52657175657374733a20310d0a557365722d4167656e743a204d6f7a696c6c612f352e3020285831313b204c696e7578207838365f363429204170706c655765624b69742f3533372e333620284b48544d4c2c206c696b65204765636b6f29205562756e7475204368726f6d69756d2f36312e302e333136332e313030204368726f6d652f36312e302e333136332e313030205361666172692f3533372e33360d0a4163636570743a20746578742f68746d6c2c6170706c69636174696f6e2f7868746d6c2b786d6c2c6170706c69636174696f6e2f786d6c3b713d302e392c696d6167652f776562702c696d6167652f61706e672c2a2f2a3b713d302e380d0a4163636570742d456e636f64696e673a20677a69702c206465666c6174650d0a4163636570742d4c616e67756167653a207a682d434e2c7a683b713d302e380d0a0d0a"
-
+#define test_http_frame_str "474554202f706d77696b692e7068702f55736572732f436f6e666967757265526f7574696e6720485454502f312e310d0a486f73743a206d756c7469706174682d7463702e6f72670d0a436f6e6e656374696f6e3a206b6565702d616c6976650d0a557067726164652d496e7365637572652d52657175657374733a20310d0a557365722d4167656e743a204d6f7a696c6c612f352e3020285831313b204c696e7578207838365f363429204170706c655765624b69742f3533372e333620284b48544d4c2c206c696b65204765636b6f29205562756e7475204368726f6d69756d2f36312e302e333136332e313030204368726f6d652f36312e302e333136332e313030205361666172692f3533372e33360d0a4163636570743a20746578742f68746d6c2c6170706c69636174696f6e2f7868746d6c2b786d6c2c6170706c69636174696f6e2f786d6c3b713d302e392c696d6167652f776562702c696d6167652f61706e672c2a2f2a3b713d302e380d0a526566657265723a20687474703a2f2f6d756c7469706174682d7463702e6f72672f706d77696b692e7068702f55736572732f486f77546f496e7374616c6c4d505443503f0d0a4163636570742d456e636f64696e673a20677a69702c206465666c6174650d0a4163636570742d4c616e67756167653a207a682d434e2c7a683b713d302e380d0a436f6f6b69653a20696d7374696d653d313530363937323236343b205f5f75746d613d35393933313138352e3330313430383230332e313439313437393838322e313530373737363239302e313530373738323738302e32373b205f5f75746d633d35393933313138353b205f5f75746d7a3d35393933313138352e313530373135363137362e32322e342e75746d6373723d676f6f676c657c75746d63636e3d286f7267616e6963297c75746d636d643d6f7267616e69637c75746d6374723d286e6f7425323070726f7669646564290d0a0d0a"
 
 // Define some constants.
 #define ETH_HDRLEN 14  // Ethernet header length
@@ -107,12 +107,13 @@ int send_mpcap_syn_ether_frame(uint8_t *ether_frame,int *frame_length);
 int recv_mpcap_synack_ether_frame(uint8_t *recv_ether_frame);
 int send_mpcap_ack_ether_frame(uint8_t* mpcap_syn_ether_frame,int mpcap_syn_frame_length,uint8_t* mpcap_synack_ether_frame);
 
-int strhextobytehex(const char* strhex,uint8_t* bytehexbuf,int len){
+int strhextobytehex(const char* strhex,int8_t* bytehexbuf,int len){
 
 	char* strhex_ptr = strhex;
-	uint8_t* bytehexbuf_ptr = bytehexbuf;
+	int8_t* bytehexbuf_ptr = bytehexbuf;
 	for(;bytehexbuf_ptr<bytehexbuf+len;bytehexbuf_ptr++){
-		sscanf(strhex_ptr,"%02x",bytehexbuf_ptr);
+		sscanf(strhex_ptr,"%02hx",bytehexbuf_ptr);
+//		printf("%c%c %02x\n", strhex_ptr[0],strhex_ptr[1],bytehexbuf_ptr[0]);
 		strhex_ptr +=2;
 	}
 	return 1;
@@ -137,6 +138,52 @@ main (int argc, char **argv)
 
 	mptcp_key_sha1(ntohll(key),NULL,&idsn);//BE
 	printf("ntohll(key):\nidsn:%16lx\nntohll(idsn):%16lx\n",idsn,ntohll(idsn));
+
+	int http_len = strlen(test_http_frame_str)/2;
+	int8_t* http_frame_buf;
+	http_frame_buf = allocate_ustrmem(http_len);
+	strhextobytehex(test_http_frame_str,http_frame_buf,http_len);
+
+	struct psu_dss psu_dss;
+	printf("psu_dss size%d\n", sizeof(psu_dss));
+	uint64_t idsn = 0;
+	mptcp_key_sha1(ntohll(sender_key_str),NULL,&idsn);
+	idsn = ntohll(idsn) + 1;
+
+	key = sender_key_str;
+	idsn = 0;
+	mptcp_key_sha1(ntohll(key),NULL,&idsn);
+	idsn = ntohll(idsn) + 1;
+	__u32 hdseq =  idsn >> 32;
+//	idsn = (__u32)idsn;
+	mp_dss.data_seq = htonl((__u32)idsn);
+	printf("mp_dss.data_seq%16lx\n", mp_dss.data_seq);
+	mp_dss.sub_seq = htonl(1);
+	mp_dss.data_len = htons(http_len);
+	mp_dss.dss_csum = 0;
+	__wsum csum = 0;
+	csum = csum_partial(&(mp_dss.data_seq), 12, checksum(http_frame_buf,http_len));
+	mp_dss.dss_csum = csum_fold(csum_partial(&hdseq, sizeof(hdseq), csum));
+
+
+	__wsum csum = 0;
+//	csum = csum_partial(&(mp_dss.data_seq), 12, checksum(http_frame_buf,http_len));
+	csum = csum_partial(http_frame_buf,http_len,csum);
+	psu_dss.dss_csum = csum_fold(csum_partial(&psu_dss, sizeof(psu_dss), csum));
+	printf("psu dss csum:%x\n", psu_dss.dss_csum);
+
+	char buf[IP_MAXPACKET];
+	memset(buf,0,IP_MAXPACKET);
+	memcpy(buf,&psu_dss,sizeof(psu_dss)*sizeof(uint8_t));
+	memcpy(buf + sizeof(psu_dss),http_frame_buf,http_len*sizeof(uint8_t));
+	uint16_t psu_dss_csum = checksum(buf,http_len+sizeof(psu_dss));
+	printf("dss csum:%x\n", psu_dss_csum);
+	for(int i=0;i < http_len+sizeof(psu_dss);i++){
+		printf("%02hhx ",buf[i]);
+		if((i+11)%16 == 0)
+			printf("\n");
+	}
+
 */
 
 
@@ -289,25 +336,21 @@ int send_mpcap_ack_ether_frame(uint8_t* mpcap_syn_ether_frame,int mpcap_syn_fram
 	mp_dss.sub_seq = htonl(1);
 	mp_dss.data_len = htons(http_len);
 	mp_dss.dss_csum = 0;
-	__wsum csum;
+/*
+	__wsum csum = 0;
 	csum = csum_partial(&(mp_dss.data_seq), 12, checksum(http_frame_buf,http_len));
 	mp_dss.dss_csum = csum_fold(csum_partial(&hdseq, sizeof(hdseq), csum));
-
+*/
 	struct psu_dss psu_dss;
 	printf("psu_dss size%d\n", sizeof(psu_dss));
-	psu_dss.data_seq = idsn;
+	psu_dss.data_seq = ntohll(idsn);
 	psu_dss.sub_seq = mp_dss.sub_seq;
 	psu_dss.data_len = mp_dss.data_len;
 	psu_dss.dss_csum = 0;
 
-	char buf[IP_MAXPACKET];
-	memset(buf,0,IP_MAXPACKET);
-	memcpy(buf,&psu_dss,sizeof(psu_dss)*sizeof(uint8_t));
-	memcpy(buf + sizeof(psu_dss),http_frame_buf,http_len*sizeof(uint8_t));
-	uint16_t psu_dss_csum = checksum(buf,http_len+sizeof(psu_dss));
-	printf("dss csum:%x %x\n", mp_dss.dss_csum,psu_dss_csum);
-	mp_dss.dss_csum = psu_dss_csum;
-
+	__wsum csum = 0;
+	csum = csum_partial(http_frame_buf,http_len,csum);
+	mp_dss.dss_csum = csum_fold(csum_partial(&psu_dss, sizeof(psu_dss), csum));
 
 	memset(opt_ack_buff,0,opt_syn_len + KEY_LEN);
 	memcpy(opt_ack_buff,&mp_dss,mp_dss.len * sizeof(uint8_t));
