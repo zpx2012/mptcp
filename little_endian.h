@@ -12,6 +12,9 @@
 #include <linux/swab.h>
 
 #define __force
+typedef __u16 __bitwise __sum16;
+typedef __u32 __bitwise __wsum;
+typedef unsigned int u32;
 
 #define __constant_htonl(x) ((__force __be32)___constant_swab32((x)))
 #define __constant_ntohl(x) ___constant_swab32((__force __be32)(x))

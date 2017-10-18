@@ -41,12 +41,13 @@
 #include "sha1.h"
 #include <errno.h>            // errno, perror()
 #include "little_endian.h"
+#include "my_checksum.h"
 
 //××××××××××××××
 //Variables need to be setted
-#define src_ip "169.235.31.250"
+#define src_ip "169.235.31.238"
 #define dst_ip "130.104.230.45"
-#define src_port 52568
+#define src_port 30120
 #define dst_port 80
 #define sender_key_str 0x5f6257d35e39d48a 
 //#define rcvv_key "a12643db3bba0a83"
@@ -80,9 +81,18 @@ struct  mp_cap {
 	uint64_t key;
 }__attribute__((__packed__));
 
+struct psu_dss
+{
+	__u64 data_seq;
+	__u32 sub_seq;
+	__u16 data_len;
+	__u16 dss_csum;
+	
+};__attribute__((__packed__));
+
 // Function prototypes
 uint16_t checksum (uint16_t *, int);
-uint16_t tcp4_checksum (struct ip, struct tcphdr, uint8_t *, int);
+uint16_t tcp4_checksum (struct ip, struct tcphdr, uint8_t *, int, uint8_t *, int);
 char *allocate_strmem (int);
 char **allocate_strmemp (int);
 uint8_t *allocate_ustrmem (int);
@@ -254,7 +264,7 @@ int send_mpcap_ack_ether_frame(uint8_t* mpcap_syn_ether_frame,int mpcap_syn_fram
 	memcpy(opt_ack_buff + opt_syn_len, rcv_key, KEY_LEN * sizeof(uint8_t));
 	memcpy(opt_ack_buff + opt_syn_len + KEY_LEN, &mp_dss, mp_dss.len *sizeof(uint8_t));
 	opt_ack_buff[1] = 20u;
-	syn_tcphdr->th_sum = tcp4_checksum (*syn_iphdr, *syn_tcphdr, opt_ack_buff, opt_ack_len);
+	syn_tcphdr->th_sum = tcp4_checksum (*syn_iphdr, *syn_tcphdr, opt_ack_buff, opt_ack_len, NULL, 0);
 	//Patch opt_ack_buff
 	memcpy (mpcap_syn_ether_frame + IP4_HDRLEN + TCP_HDRLEN, opt_ack_buff, opt_ack_len * sizeof (uint8_t));
 
@@ -272,15 +282,35 @@ int send_mpcap_ack_ether_frame(uint8_t* mpcap_syn_ether_frame,int mpcap_syn_fram
 	idsn = 0;
 	mptcp_key_sha1(ntohll(key),NULL,&idsn);
 	idsn = ntohll(idsn) + 1;
-	idsn = (__u32)idsn;
-	mp_dss.data_seq = htonl(idsn);
+	__u32 hdseq =  idsn >> 32;
+//	idsn = (__u32)idsn;
+	mp_dss.data_seq = htonl((__u32)idsn);
 	printf("mp_dss.data_seq%16lx\n", mp_dss.data_seq);
 	mp_dss.sub_seq = htonl(1);
 	mp_dss.data_len = htons(http_len);
-	mp_dss.dss_csum = 0x7ab6;
+	mp_dss.dss_csum = 0;
+	__wsum csum;
+	csum = csum_partial(&(mp_dss.data_seq), 12, checksum(http_frame_buf,http_len));
+	mp_dss.dss_csum = csum_fold(csum_partial(&hdseq, sizeof(hdseq), csum));
+
+	struct psu_dss psu_dss;
+	printf("psu_dss size%d\n", sizeof(psu_dss));
+	psu_dss.data_seq = idsn;
+	psu_dss.sub_seq = mp_dss.sub_seq;
+	psu_dss.data_len = mp_dss.data_len;
+	psu_dss.dss_csum = 0;
+
+	char buf[IP_MAXPACKET];
+	memset(buf,0,IP_MAXPACKET);
+	memcpy(buf,&psu_dss,sizeof(psu_dss)*sizeof(uint8_t));
+	memcpy(buf + sizeof(psu_dss),http_frame_buf,http_len*sizeof(uint8_t));
+	uint16_t psu_dss_csum = checksum(buf,http_len+sizeof(psu_dss));
+	printf("dss csum:%x %x\n", mp_dss.dss_csum,psu_dss_csum);
+	mp_dss.dss_csum = psu_dss_csum;
+
+
 	memset(opt_ack_buff,0,opt_syn_len + KEY_LEN);
 	memcpy(opt_ack_buff,&mp_dss,mp_dss.len * sizeof(uint8_t));
-
 
 	// PSH flag (1 bit)
 	tcp_flags[3] = 1;
@@ -293,7 +323,8 @@ int send_mpcap_ack_ether_frame(uint8_t* mpcap_syn_ether_frame,int mpcap_syn_fram
 	opt_ack_len = 20;
 	syn_iphdr->ip_len = htons (IP4_HDRLEN + TCP_HDRLEN + opt_ack_len + http_len);
 	syn_tcphdr->th_off = (TCP_HDRLEN + opt_ack_len) / 4;
-	syn_tcphdr->th_sum = tcp4_checksum (*syn_iphdr, *syn_tcphdr, opt_ack_buff, opt_ack_len);
+	syn_tcphdr->th_sum = tcp4_checksum (*syn_iphdr, *syn_tcphdr, opt_ack_buff, opt_ack_len, http_frame_buf, http_len);
+	printf("TCP CSUM: %02X %02X\n", syn_tcphdr->th_sum & 0xff, (syn_tcphdr->th_sum >> 8) & 0xff);
 
 	memcpy (mpcap_syn_ether_frame + IP4_HDRLEN + TCP_HDRLEN, opt_ack_buff, opt_ack_len * sizeof (uint8_t));
 	memcpy(mpcap_syn_ether_frame + IP4_HDRLEN + TCP_HDRLEN + opt_ack_len, http_frame_buf,http_len * sizeof(uint8_t));
@@ -408,36 +439,6 @@ int send_mpcap_syn_ether_frame(uint8_t *ether_frame,int *frame_length)
 	}
 	opt_buffer = allocate_ustrmem (40);
 	
-	//×××××××××××××××××××××××
-	// Number of TCP options
-	
-	// First TCP option - Maximum segment size
-/*
-	opt_len[0] = 0;
-	options[0][0] = 2u; opt_len[0]++;  // Option kind 2 = maximum segment size
-	options[0][1] = 4u; opt_len[0]++;  // This option kind is 4 bytes long
-	options[0][2] = 0x05u; opt_len[0]++;  // Set maximum segment size to 0x100 = 256
-	options[0][3] = 0xb4u; opt_len[0]++;
-*/	
-
-
-
-	// Second TCP option - Multipath Capable
-/*
-	opt_len[1] = 0;
-	options[1][0] = 30u; opt_len[1]++;	// Option kind 30 = MPTCP
-	options[1][1] = 12u; opt_len[1]++;	// This option is 12 bytes long
-	options[1][2] = 0; opt_len[1]++;	// Set subtype: MPCAP(0) Version(0)
-	options[1][3] = 0x81u; opt_len[1]++;// Flags:10000001
-	options[1][4] = 0x53u; opt_len[1]++;// Set Sender's Key
-	options[1][5] = 0xddu; opt_len[1]++;
-	options[1][6] = 0x5au; opt_len[1]++;  
-	options[1][7] = 0x9fu; opt_len[1]++;
-	options[1][8] = 0x95u; opt_len[1]++;
-	options[1][9] = 0x31u; opt_len[1]++;
-	options[1][10] = 0x82u; opt_len[1]++;
-	options[1][11] = 0xc9u; opt_len[1]++;
-*/	
 	struct mp_cap mp_cap;
 	mp_cap.kind = 30;
 	mp_cap.len = 12;
@@ -569,7 +570,7 @@ int send_mpcap_syn_ether_frame(uint8_t *ether_frame,int *frame_length)
 	tcphdr.th_urp = htons (0);
 	
 	// TCP checksum (16 bits)
-	tcphdr.th_sum = tcp4_checksum (iphdr, tcphdr, opt_buffer, buf_len);
+	tcphdr.th_sum = tcp4_checksum (iphdr, tcphdr, opt_buffer, buf_len, NULL, 0);
 	
 	// Fill out ethernet frame header.
 	
@@ -676,12 +677,15 @@ checksum (uint16_t *addr, int len)
 
 // Build IPv4 TCP pseudo-header and call checksum function.
 uint16_t
-tcp4_checksum (struct ip iphdr, struct tcphdr tcphdr, uint8_t *options, int opt_len)
+tcp4_checksum (struct ip iphdr, struct tcphdr tcphdr, uint8_t *options, int opt_len, uint8_t *payload, int payload_len)
 {
 	uint16_t svalue;
 	char buf[IP_MAXPACKET], cvalue;
 	char *ptr;
 	int chksumlen = 0;
+
+  if (payload == NULL)
+    payload_len = 0;
 
   ptr = &buf[0];  // ptr points to beginning of buffer buf
 
@@ -705,7 +709,7 @@ tcp4_checksum (struct ip iphdr, struct tcphdr tcphdr, uint8_t *options, int opt_
   chksumlen += sizeof (iphdr.ip_p);
 
   // Copy TCP length to buf (16 bits)
-  svalue = htons (sizeof (tcphdr) + opt_len);
+  svalue = htons (sizeof (tcphdr) + opt_len + payload_len);
   memcpy (ptr, &svalue, sizeof (svalue));
   ptr += sizeof (svalue);
   chksumlen += sizeof (svalue);
@@ -762,6 +766,14 @@ tcp4_checksum (struct ip iphdr, struct tcphdr tcphdr, uint8_t *options, int opt_
   memcpy (ptr, options, opt_len);
   ptr += opt_len;
   chksumlen += opt_len;
+
+  // Copy TCP payload to buf
+  if (payload && payload_len) {
+    printf("has payload.\n");
+    memcpy(ptr, payload, payload_len);
+    ptr += payload_len;
+    chksumlen += payload_len;
+  }
 
   return checksum ((uint16_t *) buf, chksumlen);
 }
