@@ -63,6 +63,16 @@
 #define TCP_HDRLEN 20  // TCP header length, excludes options data
 #define KEY_LEN 8
 
+#define FIN 0
+#define SYN 1
+#define RST 2
+#define PSH 3
+#define ACK 4
+#define URG 5
+#define ECE 6
+#define CWR 7
+
+
 
 struct mp_dss {
 	__u8	kind;
@@ -96,9 +106,9 @@ struct psu_dss
 
 uint64_t key_rem_n=0,key_loc_n=0;//network order
 uint64_t idsn_rem_n=0,idsn_loc_n=0;
-uint32_t data_seq_n=0,data_ack_n=0;
 uint32_t token_rem_n=0,token_loc_n=0;
-
+uint32_t data_seq_h=0,data_ack_h=0;
+uint32_t sub_seq_h=1;
 
 // Function prototypes
 uint16_t checksum (uint16_t *, int);
@@ -115,7 +125,7 @@ void mptcp_key_sha1(uint64_t key, uint32_t *token, uint64_t *idsn);
 int strhextobytehex(const char* strhex,int8_t* bytehexbuf,int len);
 uint32_t get_rand();
 
-uint32_t get_data_seq_n_32(uint64_t idsn_n);
+uint32_t get_data_seq_h_32(uint64_t idsn_n);
 int create_mpdss_ack (unsigned char *top, uint16_t *len, uint32_t ack_num_n);
 int create_MPadd_addr(unsigned char *top, uint16_t *len, unsigned char addr_id_loc, const char* sfl_ip_loc);
 int create_MPjoin_syn(unsigned char *top, uint16_t *len, uint32_t token, unsigned char addr_id);
@@ -343,7 +353,6 @@ int send_mpcap_ack_ether_frame(uint8_t* mpcap_syn_ether_frame,int mpcap_syn_fram
 	tcp_flags = allocate_intmem (8);
 	opt_ack_buff = allocate_ustrmem (opt_syn_len + KEY_LEN + 12);
 	http_len = strlen(http_frame_str)/2;
-	printf("%d\n", http_len);
 	http_frame_buf = allocate_ustrmem(http_len);
 
 	syn_iphdr = get_iphdr(mpcap_syn_ether_frame);
@@ -351,10 +360,6 @@ int send_mpcap_ack_ether_frame(uint8_t* mpcap_syn_ether_frame,int mpcap_syn_fram
 	synack_tcphdr = get_tcphdr(mpcap_synack_ether_frame + ETH_HDRLEN);
 
 	// Cast rcv_key
-	p_rcv_key = (uint64_t*)(mpcap_synack_ether_frame + ETH_HDRLEN + mpcap_syn_frame_length + 4 - KEY_LEN);
-	key_rem_n = *p_rcv_key;
-	mptcp_key_sha1(key_rem_n,&token_rem_n,&idsn_rem_n);
-	data_ack_n = get_data_seq_n_32(idsn_rem_n);
 
 
 	//Modify syn frame to ack frame
@@ -370,6 +375,8 @@ int send_mpcap_ack_ether_frame(uint8_t* mpcap_syn_ether_frame,int mpcap_syn_fram
 
 	// Window size (16 bits)
 	syn_tcphdr->th_win = htons (29312);
+
+
 
 	// Flags (8 bits)	
 	// FIN flag (1 bit)
@@ -497,11 +504,18 @@ int send_mpcap_ack_ether_frame(uint8_t* mpcap_syn_ether_frame,int mpcap_syn_fram
 	return 1;
 }
 
+int update_packet(){
 
-uint32_t get_data_seq_n_32(uint64_t idsn_n){
+
+}
+
+
+
+//seq = idsn+1
+uint32_t get_data_seq_h_32(uint64_t idsn_n){
 	uint64_t idsn_h = ntohll(idsn_n);
 	uint32_t data_seq_h = (uint32_t)(idsn_h+1);
-	return htonl(data_seq_h);
+	return data_seq_h;
 }
 
 int create_MPadd_addr(unsigned char *top, uint16_t *len, unsigned char addr_id_loc, const char* sfl_ip_loc) {
@@ -610,6 +624,11 @@ int recv_mpcap_synack_ether_frame(uint8_t *recv_ether_frame)
       	if ((recv_iphdr->ip_p == IPPROTO_TCP) && (inet_addr(dst_ip) == recv_iphdr->ip_src.s_addr) && 
       	    (htons(dst_port) == recv_tcphdr->th_sport) && (htons(src_port) == recv_tcphdr->th_dport)){
       			//printf("th_ack:%x\n", recv_tcphdr->th_ack);
+      		p_rcv_key = (uint64_t*)(recv_ether_frame + ETH_HDRLEN + mpcap_syn_frame_length + 4 - KEY_LEN);
+      		key_rem_n = *p_rcv_key;
+      		mptcp_key_sha1(key_rem_n,&token_rem_n,&idsn_rem_n);
+      		data_ack_h = get_data_seq_h_32(idsn_rem_n);
+
       			break;
        	} 
     }  // End of Receive loop.
