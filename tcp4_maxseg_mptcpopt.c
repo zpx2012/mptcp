@@ -334,79 +334,66 @@ int send_mpjoin_syn_ether_frame(uint8_t *ether_frame,int *frame_length)
 	return 1;
 }
 
-
-
-int send_mpcap_ack_ether_frame(uint8_t* mpcap_syn_ether_frame,int mpcap_syn_frame_length,uint8_t* mpcap_synack_ether_frame)
-{
-	uint8_t *opt_ack_buff;
-	struct ip *syn_iphdr;
-	struct tcphdr *syn_tcphdr,*synack_tcphdr;
-	int *tcp_flags;
-	int i,opt_syn_len = 12,opt_ack_len;
-
-	struct mp_dss mp_dss;
-	uint64_t key,idsn,*p_rcv_key;
+int update_packet_len_checksum(uint8_t* p_pkg,uint8_t *opt_buff,unsigned int opt_len){
 	
-	int http_len = 0;
-	uint8_t* http_frame_buf;
+	struct ip *syn_iphdr;
+	struct tcphdr *syn_tcphdr;
 
-	tcp_flags = allocate_intmem (8);
-	opt_ack_buff = allocate_ustrmem (opt_syn_len + KEY_LEN + 12);
-	http_len = strlen(http_frame_str)/2;
-	http_frame_buf = allocate_ustrmem(http_len);
+	syn_iphdr = get_iphdr(p_pkg);
+	syn_tcphdr = get_tcphdr(p_pkg);
 
-	syn_iphdr = get_iphdr(mpcap_syn_ether_frame);
-	syn_tcphdr = get_tcphdr(mpcap_syn_ether_frame);
-	synack_tcphdr = get_tcphdr(mpcap_synack_ether_frame + ETH_HDRLEN);
+	//length
+	syn_iphdr->ip_len = htons (IP4_HDRLEN + TCP_HDRLEN + opt_len);
+	syn_tcphdr->th_off = (TCP_HDRLEN + opt_len) / 4;
 
-	// Cast rcv_key
+	//checksum
+	syn_tcphdr->th_sum = tcp4_checksum (*syn_iphdr, *syn_tcphdr, opt_buff, opt_len, NULL, 0);
 
+	return 1;
+}
 
-	//Modify syn frame to ack frame
+int update_packet_seq_flag(uint8_t* p_pkg,uint32_t tcp_seq,uint32_t tcp_ack,uint8_t FLAG){
 
-	//IP level
-	//Total length of IP datagram (16 bits)	
-	syn_iphdr->ip_sum = checksum ((uint16_t *) &syn_iphdr, IP4_HDRLEN);
+	int *tcp_flags;
+	struct ip *syn_iphdr;
+	struct tcphdr *syn_tcphdr;
+
+	tcp_flags = allocate_intmem (8);//has initialized to 0
+	syn_iphdr = get_iphdr(p_pkg);
+	syn_tcphdr = get_tcphdr(p_pkg);
 
 	//TCP level
 	// Data offset (4 bits): size of TCP header + length of options, in 32-bit words
-	syn_tcphdr->th_ack = htonl(ntohl(synack_tcphdr->th_seq) + 1);
-	syn_tcphdr->th_seq = synack_tcphdr->th_ack;
+	syn_tcphdr->th_ack = htonl(tcp_seq);
+	syn_tcphdr->th_seq = htonl(tcp_ack);
 
-	// Window size (16 bits)
-	syn_tcphdr->th_win = htons (29312);
-
-
-
-	// Flags (8 bits)	
-	// FIN flag (1 bit)
-	tcp_flags[0] = 0;
-	
-	// SYN flag (1 bit): set to 1
-	tcp_flags[1] = 0;
-	
-	// RST flag (1 bit)
-	tcp_flags[2] = 0;
-	
-	// PSH flag (1 bit)
-	tcp_flags[3] = 0;
-	
-	// ACK flag (1 bit)
-	tcp_flags[4] = 1;
-	
-	// URG flag (1 bit)
-	tcp_flags[5] = 0;
-	
-	// ECE flag (1 bit)
-	tcp_flags[6] = 0;
-	
-	// CWR flag (1 bit)
-	tcp_flags[7] = 0;
+	tcp_flags[FLAG] = 1;
 	
 	syn_tcphdr->th_flags = 0;
 	for (i=0; i<8; i++) {
 		syn_tcphdr->th_flags += (tcp_flags[i] << i);
 	}
+
+}
+
+
+int send_mpcap_ack_ether_frame(uint8_t* mpcap_syn_ether_frame,int mpcap_syn_frame_length,uint8_t* mpcap_synack_ether_frame)
+{
+	uint8_t *opt_ack_buff;	
+	unsigned int i,opt_syn_len = 12,opt_ack_len;
+
+	int http_len = 0;
+	uint8_t* http_frame_buf;
+
+	opt_ack_buff = allocate_ustrmem (opt_syn_len + KEY_LEN + 12);
+	http_len = strlen(http_frame_str)/2;
+	http_frame_buf = allocate_ustrmem(http_len);
+
+
+
+
+	//Modify syn frame to ack frame
+
 
 	//Create opt_ack_buff
 	memcpy(opt_ack_buff,mpcap_syn_ether_frame + IP4_HDRLEN + TCP_HDRLEN, opt_syn_len * sizeof(uint8_t));
@@ -436,12 +423,6 @@ int send_mpcap_ack_ether_frame(uint8_t* mpcap_syn_ether_frame,int mpcap_syn_fram
 	create_mpdss_ack(opt_ack_buff,&opt_ack_len,data_ack_n);
 	memcpy (mpcap_syn_ether_frame + IP4_HDRLEN + TCP_HDRLEN, opt_ack_buff, opt_ack_len * sizeof (uint8_t));
 
-	//length
-	syn_iphdr->ip_len = htons (IP4_HDRLEN + TCP_HDRLEN + opt_ack_len);
-	syn_tcphdr->th_off = (TCP_HDRLEN + opt_ack_len) / 4;
-
-	//checksum
-	syn_tcphdr->th_sum = tcp4_checksum (*syn_iphdr, *syn_tcphdr, opt_ack_buff, opt_ack_len, NULL, 0);
 
 	send_ether_frame(mpcap_syn_ether_frame, IP4_HDRLEN + TCP_HDRLEN + opt_ack_len);
 
@@ -504,11 +485,13 @@ int send_mpcap_ack_ether_frame(uint8_t* mpcap_syn_ether_frame,int mpcap_syn_fram
 	return 1;
 }
 
-int update_packet(){
 
-
+uint32_t get_rand() {
+	uint32_t nmb;
+	nmb = rand();
+	nmb += ( (rand()%2) <<31);
+	return nmb;
 }
-
 
 
 //seq = idsn+1
@@ -553,12 +536,6 @@ int create_MPjoin_syn(unsigned char *top, uint16_t *len, uint32_t token, unsigne
 	return 1;
 }
 
-uint32_t get_rand() {
-	uint32_t nmb;
-	nmb = rand();
-	nmb += ( (rand()%2) <<31);
-	return nmb;
-}
 
 
 int create_mpdss_ack(unsigned char *top, uint16_t *len, uint32_t ack_num_n){
