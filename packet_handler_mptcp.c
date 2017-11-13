@@ -108,7 +108,7 @@ int send_packet(uint8_t* buf_pkg,int len_pkg)
 	return 1;
 }
 
-int send_mptcp_packet(struct subflow_cb* p_sf_cb, uint8_t mptcp_sub_type, uint8_t tcp_flag,const unsigned char* payload,unsigned int payload_len)
+int send_mptcp_packet(struct subflow_cb* p_sf_cb, uint8_t mptcp_sub_type, uint8_t tcp_flag, unsigned char* payload, unsigned int payload_len)
 {
 	uint8_t *opt_buffer= NULL,*packet_buffer = NULL;
 	uint16_t opt_len = 0,packet_len = 0;
@@ -123,7 +123,7 @@ int send_mptcp_packet(struct subflow_cb* p_sf_cb, uint8_t mptcp_sub_type, uint8_
 		case MPTCP_SUB_CAPABLE:
 			create_MPcap(opt_buffer,&opt_len,mpc_global.key_loc_n,mpc_global.key_rem_n);
 			if(tcp_flag == ACK)
-				create_mpdss_ack(opt_buffer,&opt_len,mpc_global.data_ack_h);
+				create_MPdss_ack(opt_buffer,&opt_len,mpc_global.data_ack_h);
 			break;
 		case MPTCP_SUB_JOIN:
 			if(tcp_flag == SYN){
@@ -145,13 +145,15 @@ int send_mptcp_packet(struct subflow_cb* p_sf_cb, uint8_t mptcp_sub_type, uint8_
 			break;
 		case MPTCP_SUB_ADD_ADDR:
 			create_MPadd_addr(opt_buffer,&opt_len,p_sf_cb->p_slave_sf_cb->addr_id_loc,p_sf_cb->p_slave_sf_cb->ip_loc_n);
-			create_mpdss_ack(opt_buffer,&opt_len,mpc_global.data_ack_h);
+			create_MPdss_ack(opt_buffer,&opt_len,mpc_global.data_ack_h);
 			break;
 		case MPTCP_SUB_DSS:
-			create_complete_MPdss(opt_buffer,&opt_len,mpc_global.data_ack_h,mpc_global.data_seq_next_h,p_sf_cb->sub_seq_next_h,payload_len);
+			create_complete_MPdss(opt_buffer,&opt_len,mpc_global.data_ack_h,mpc_global.data_seq_next_h,p_sf_cb->sub_seq_next_h,(uint32_t)((mpc_global.idsn_loc_n)>>32),payload,payload_len);
 			break;
 		case MPTCP_SUB_FCLOSE:
-			create_MPfclose(opt_buffer,&opt_len,&(mpc_global.key_loc_n));
+			create_MPfclose(opt_buffer,&opt_len,&(mpc_global.key_rem_n));
+			break;
+		case NO_MPTCP_OPTION:
 			break;
 		default:
 			perror ("send_mptcp_packet():unexpected mptcp_sub_type");
@@ -162,9 +164,8 @@ int send_mptcp_packet(struct subflow_cb* p_sf_cb, uint8_t mptcp_sub_type, uint8_
 
 	send_packet(packet_buffer,packet_len);
 
-	// Free allocated memory.
-	free (opt_buffer);
-	free (packet_buffer);
+	free(opt_buffer);
+	free(packet_buffer);
 
 	return 1;
 }
@@ -285,7 +286,7 @@ main (int argc, char **argv)
 
   	//second handshake
 	if(-1 == recv_mptcp_packet(&sf_master)){
-		send_mptcp_packet(&sf_master,MPTCP_SUB_FCLOSE,FIN|ACK,NULL,0);
+		send_mptcp_packet(&sf_master,MPTCP_SUB_FCLOSE,ACK,NULL,0);
 		return(EXIT_FAILURE);
 	}
 
@@ -309,8 +310,8 @@ main (int argc, char **argv)
 	send_mptcp_packet(&sf_slave,MPTCP_SUB_DSS,ACK|PSH,HTTP_FRAME2_STR,strlen(HTTP_FRAME2_STR));
 
 	//FCLOSE
-	send_mptcp_packet(&sf_master,MPTCP_SUB_FCLOSE,FIN|ACK,NULL,0);
-	send_mptcp_packet(&sf_slave ,MPTCP_SUB_FCLOSE,FIN|ACK,NULL,0);
+	send_mptcp_packet(&sf_master,MPTCP_SUB_FCLOSE,ACK,NULL,0);
+	send_mptcp_packet(&sf_slave ,NO_MPTCP_OPTION,RST,NULL,0);
 	return (EXIT_SUCCESS);
 
 

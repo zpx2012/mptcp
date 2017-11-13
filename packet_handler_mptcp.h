@@ -41,6 +41,7 @@
 
 
 //MPTCP
+#define NO_MPTCP_OPTION 0xf
 #define SUBFLOW_MASTER 0
 
 #define MPTCP_VERSION_0 0
@@ -170,15 +171,6 @@ uint16_t checksum (uint16_t *, int);
 uint16_t tcp4_checksum (struct ip, struct tcphdr, uint8_t *, int, const uint8_t *, int);
 void mptcp_key_sha1(uint64_t key, uint32_t *token, uint64_t *idsn);
 
-int init_subflow_cb(
-	struct subflow_cb* p_sf_cb, 
-	const char* ip_loc_str,
-	const char* ip_rem_str, 
-	uint16_t port_loc_h,
-	uint16_t port_rem_h,
-	uint8_t addr_id_loc,
-	uint8_t is_master);
-
 uint32_t get_rand() {
 	uint32_t nmb;
 	nmb = rand();
@@ -194,6 +186,14 @@ uint32_t get_data_seq_h_32(uint64_t idsn_n){
 	return data_seq_h;
 }
 
+uint16_t mpdsm_checksum(unsigned char *p_dsm, uint32_t idsn_high, unsigned char *payload,uint16_t len_payload){
+
+	__wsum csum = 0;
+
+	csum = csum_partial(payload,len_payload,csum);
+	csum = csum_partial(p_dsm,12,csum);
+	return csum_fold(csum_partial(&idsn_high, 4, csum));
+}
 
 int create_packet(unsigned char *buf, uint16_t *plen, 
 	struct subflow_cb* p_sf_cb, 
@@ -201,7 +201,7 @@ int create_packet(unsigned char *buf, uint16_t *plen,
 	uint16_t win, //host format
 	unsigned char *buf_opt, 
 	uint16_t len_opt,
-	const unsigned char *buf_payload,
+	unsigned char *buf_payload,
 	uint16_t len_payload) {
 
 	int *ip_flags, *tcp_flags;
@@ -212,7 +212,9 @@ int create_packet(unsigned char *buf, uint16_t *plen,
 	ip_flags = allocate_intmem (4);
 	tcp_flags = allocate_intmem (8);
 	
-	if((len_payload==0 && buf_payload!=NULL) || (len_payload!=0 && buf_payload==NULL)){
+	if((len_payload==0 && buf_payload!=NULL) || (len_payload!=0 && buf_payload==NULL) ||
+		(len_opt==0    && buf_opt!=NULL)     || (len_opt!=0     && buf_opt==NULL)
+	  ){
 		perror("payload sanity check failed in create_packet.\n");
 		return -1;
 	}
@@ -268,6 +270,15 @@ int create_packet(unsigned char *buf, uint16_t *plen,
 	memcpy (buf + IP4_HDRLEN, &tcphdr, TCP_HDRLEN * sizeof (uint8_t));
 	
 	// TCP Options
+	if(len_opt == 0){
+		//Update Seq num
+		if(flags != ACK){
+			p_sf_cb->tcp_seq_next_h++;
+			printf("275 tcp_seq_next_h:%x\n",p_sf_cb->tcp_seq_next_h);
+		}
+		return 1;
+	}
+
 	memcpy (buf + IP4_HDRLEN + TCP_HDRLEN, buf_opt, len_opt * sizeof (uint8_t));
 
 	//Without Payload
@@ -362,7 +373,7 @@ int create_MPjoin_ack(unsigned char *top, uint16_t *len, uint32_t *mac_n) {
 	return 1;
 }
 
-int create_mpdss_ack(unsigned char *top, uint16_t *len, uint32_t ack_num_h){
+int create_MPdss_ack(unsigned char *top, uint16_t *len, uint32_t ack_num_h){
 
 	uint16_t new_len = MPTCP_SUB_LEN_DSS + MPTCP_SUB_LEN_ACK;
 	
@@ -380,7 +391,7 @@ int create_mpdss_ack(unsigned char *top, uint16_t *len, uint32_t ack_num_h){
 }
 
 int create_complete_MPdss(unsigned char *top, uint16_t *len, 
-		uint32_t data_ack_h, uint32_t data_seq_next_h, uint32_t sub_seq_next_h, uint16_t data_len) {
+		uint32_t data_ack_h, uint32_t data_seq_next_h, uint32_t sub_seq_next_h, uint32_t idsn_high, unsigned char *payload,uint16_t len_payload) {
 //*for Data Seq is 8 octets and Data Ack is 8 octets
 //	unsigned char tpdss_len = (dssopt_out.Aflag)? 8:4;//4 bytes min, 8bytes if dan present
 //	tpdss_len += (dssopt_out.Mflag)? 10:0;//add 8bytes more for dsn and ssn
@@ -401,13 +412,17 @@ int create_complete_MPdss(unsigned char *top, uint16_t *len,
 	*(start+1) = tpdss_len;
 	*(start+2) = ( ((unsigned char) MPTCP_SUB_DSS)<<4) & 0xf0;
 	*(start+3) = 0x05;
-	*((uint32_t*) (start+4)) = htonl(data_ack_h);
-	*((uint32_t*) (start+8)) = htonl(data_seq_next_h);
+	*((uint32_t*) (start+4))  = htonl(data_ack_h);
+	*((uint32_t*) (start+8))  = htonl(data_seq_next_h);
 	*((uint32_t*) (start+12)) = htonl(sub_seq_next_h);
-	*((uint16_t*) (start+16)) = htons(data_len);
+	*((uint16_t*) (start+16)) = htons(len_payload);
+	*((uint16_t*) (start+18)) = mpdsm_checksum(start+8,idsn_high,payload,len_payload);
 	(*len) += tpdss_len;
 	return 1;
 }
+
+
+
 
 
 int create_MPfclose(unsigned char *top, uint16_t *len, uint64_t *key_rem) {
