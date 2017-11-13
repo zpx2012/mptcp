@@ -2,14 +2,15 @@
 
 //××××××××××××××
 //Variables need to be setted
-#define IP_LOC1_STR "192.168.1.133"
-#define IP_LOC2_STR "10.11.12.13"
+#define IP_LOC1_STR "172.31.98.85"
+#define IP_LOC2_STR "127.0.0.1"
 #define IP_REM_STR "130.104.230.45"
 #define PORT_REM 80
 #define SUBFLOW_ADDR_ID 3
 
 #define KEY_LOC_N 0x5f6257d35e39d48a 
-#define HTTP_FRAME_STR "474554202f66616c6f6e67676f6e6720485454502f312e310d0a486f73743a206d756c7469706174682d7463702e6f72670d0a436f6e6e656374696f6e3a206b6565702d616c6976650d0a557067726164652d496e7365637572652d52657175657374733a20310d0a557365722d4167656e743a204d6f7a696c6c612f352e3020285831313b204c696e7578207838365f363429204170706c655765624b69742f3533372e333620284b48544d4c2c206c696b65204765636b6f29205562756e7475204368726f6d69756d2f36312e302e333136332e313030204368726f6d652f36312e302e333136332e313030205361666172692f3533372e33360d0a4163636570743a20746578742f68746d6c2c6170706c69636174696f6e2f7868746d6c2b786d6c2c6170706c69636174696f6e2f786d6c3b713d302e392c696d6167652f776562702c696d6167652f61706e672c2a2f2a3b713d302e380d0a4163636570742d456e636f64696e673a20677a69702c206465666c6174650d0a4163636570742d4c616e67756167653a207a682d434e2c7a683b713d302e380d0a0d0a"
+#define HTTP_FRAME1_STR "474554"
+#define HTTP_FRAME2_STR "202f66616c6f6e67676f6e6720485454502f312e310d0a486f73743a206d756c7469706174682d7463702e6f72670d0a436f6e6e656374696f6e3a206b6565702d616c6976650d0a557067726164652d496e7365637572652d52657175657374733a20310d0a557365722d4167656e743a204d6f7a696c6c612f352e3020285831313b204c696e7578207838365f363429204170706c655765624b69742f3533372e333620284b48544d4c2c206c696b65204765636b6f29205562756e7475204368726f6d69756d2f36312e302e333136332e313030204368726f6d652f36312e302e333136332e313030205361666172692f3533372e33360d0a4163636570743a20746578742f68746d6c2c6170706c69636174696f6e2f7868746d6c2b786d6c2c6170706c69636174696f6e2f786d6c3b713d302e392c696d6167652f776562702c696d6167652f61706e672c2a2f2a3b713d302e380d0a4163636570742d456e636f64696e673a20677a69702c206465666c6174650d0a4163636570742d4c616e67756167653a207a682d434e2c7a683b713d302e380d0a0d0a"
 
 struct mpcb mpc_global;
 
@@ -21,7 +22,8 @@ int init_subflow_cb(
 	uint16_t port_loc_h,
 	uint16_t port_rem_h,
 	uint8_t addr_id_loc,
-	uint8_t is_master)
+	uint8_t is_master,
+	struct subflow_cb *p_slave_sf_cb)
 {
 	int status;
 
@@ -40,13 +42,17 @@ int init_subflow_cb(
 	p_sf_cb->port_rem_h = port_rem_h;
 	p_sf_cb->tcp_ack_h = 0;
 	p_sf_cb->tcp_seq_next_h = random() % 65535;
-	p_sf_cb->sub_seq_next_h = 0;
+	p_sf_cb->sub_seq_next_h = 1;
 
 	p_sf_cb->rand_loc_n = get_rand();
 	p_sf_cb->rand_rem_n = 0;
 	p_sf_cb->addr_id_loc = addr_id_loc;
 	p_sf_cb->addr_id_rem = 0;
 	p_sf_cb->is_master = is_master;
+	if(is_master == SUBFLOW_MASTER)		
+		p_sf_cb->p_slave_sf_cb = p_slave_sf_cb;
+	else
+		p_sf_cb->p_slave_sf_cb = NULL;
 	return 1;
 
 }
@@ -75,7 +81,7 @@ void do_iptable(){
 
 }
 
-int send_packet(uint8_t* buf_pkg,int len_pkg,struct subflow_cb* p_sf_cb)
+int send_packet(uint8_t* buf_pkg,int len_pkg)
 {
 	int sd,bytes;
 	struct sockaddr_in dst_addr;
@@ -88,8 +94,8 @@ int send_packet(uint8_t* buf_pkg,int len_pkg,struct subflow_cb* p_sf_cb)
 
 	// Fill out sockaddr_ll.
 	dst_addr.sin_family = AF_INET;
-	dst_addr.sin_port = htons(p_sf_cb->port_rem_h);
-	dst_addr.sin_addr.s_addr = p_sf_cb->ip_rem_n;
+	dst_addr.sin_port = get_tcphdr_from_ip_frame(buf_pkg)->th_dport;
+	dst_addr.sin_addr.s_addr = ((struct ip*)buf_pkg)->ip_dst.s_addr;
 
 	// Send ethernet frame to socket.
 	if ((bytes = sendto (sd, buf_pkg, len_pkg, 0, (struct sockaddr *) &dst_addr, sizeof(dst_addr))) <= 0) {
@@ -124,7 +130,10 @@ int send_mptcp_packet(struct subflow_cb* p_sf_cb, uint8_t mptcp_sub_type, uint8_
 				create_MPjoin_syn(opt_buffer,&opt_len,mpc_global.token_rem_n,p_sf_cb->rand_loc_n);
 			}
 			else if(tcp_flag == ACK){
-				mptcp_hmac_sha1((uint8_t *)&mpc_global.key_loc_n,
+				if(p_sf_cb->rand_rem_n == 0){
+					perror("send_mptcp_packet():NULL rand_rem_n\n");
+				}
+				mptcp_hmac_sha1((uint8_t *)&mpc_global.key_loc_n,  //order of ley_loc and key_rem matters
 								(uint8_t *)&mpc_global.key_rem_n,
 								(uint32_t *)hash_mac, 2,
 								4, (uint8_t *)&p_sf_cb->rand_loc_n,
@@ -132,23 +141,26 @@ int send_mptcp_packet(struct subflow_cb* p_sf_cb, uint8_t mptcp_sub_type, uint8_
 				create_MPjoin_ack(opt_buffer, &opt_len, (uint32_t *)hash_mac);
 			}
 			else
-				perror ("unexpected flag of MPTCP_SUB_JOIN in send_mptcp_packet()");
+				perror ("send_mptcp_packet():unexpected flag of MPTCP_SUB_JOIN");
 			break;
 		case MPTCP_SUB_ADD_ADDR:
-			create_MPadd_addr(opt_buffer,&opt_len,p_sf_cb->addr_id_loc,p_sf_cb->ip_loc_n);
+			create_MPadd_addr(opt_buffer,&opt_len,p_sf_cb->p_slave_sf_cb->addr_id_loc,p_sf_cb->p_slave_sf_cb->ip_loc_n);
 			create_mpdss_ack(opt_buffer,&opt_len,mpc_global.data_ack_h);
 			break;
-//		case MPTCP_SUB_DSS:
-//			create_complete_MPdss();
-//			break;
+		case MPTCP_SUB_DSS:
+			create_complete_MPdss(opt_buffer,&opt_len,mpc_global.data_ack_h,mpc_global.data_seq_next_h,p_sf_cb->sub_seq_next_h,payload_len);
+			break;
+		case MPTCP_SUB_FCLOSE:
+			create_MPfclose(opt_buffer,&opt_len,&(mpc_global.key_loc_n));
+			break;
 		default:
-			perror ("unexpected mptcp_sub_type in send_mptcp_packet()");
+			perror ("send_mptcp_packet():unexpected mptcp_sub_type");
 			break;
 	}
 
 	create_packet(packet_buffer,&packet_len,p_sf_cb,tcp_flag,29200,opt_buffer,opt_len,payload,payload_len);	
 
-	send_packet(packet_buffer,packet_len,p_sf_cb);
+	send_packet(packet_buffer,packet_len);
 
 	// Free allocated memory.
 	free (opt_buffer);
@@ -206,21 +218,24 @@ int recv_mptcp_packet(struct subflow_cb* p_sf_cb)
       	// Check for an IP ethernet frame. If not, ignore and keep listening.
       	if (
       		(recv_iphdr->ip_p == IPPROTO_TCP) && 
-      		(p_sf_cb->ip_rem_n == recv_iphdr->ip_src.s_addr) && 
+      		(p_sf_cb->ip_rem_n == recv_iphdr->ip_src.s_addr) &&
+      		(p_sf_cb->ip_loc_n == recv_iphdr->ip_dst.s_addr) &&  
       		(htons(p_sf_cb->port_rem_h) == recv_tcphdr->th_sport) && 
       		(htons(p_sf_cb->port_loc_h) == recv_tcphdr->th_dport)
       		)
       	{
       		//check seq and update ack in mpc
-      		if(htonl(p_sf_cb->tcp_seq_next_h) != recv_tcphdr->th_ack){
-      			fprintf (stderr, "seq check in recv_mpcap_synack failed.\nError message: %s", strerror (status));
-      			exit (EXIT_FAILURE);
+      		if(p_sf_cb->tcp_seq_next_h != ntohl(recv_tcphdr->th_ack)){
+      			fprintf(stderr,"seq check in recv_mpcap_synack failed:tcp_seq_next_h %x,th_ack %x\n",p_sf_cb->tcp_seq_next_h,ntohl(recv_tcphdr->th_ack));
+      			printf("\n");
+      			return -1;
       		}
       		p_sf_cb->tcp_ack_h = ntohl(recv_tcphdr->th_seq) + 1;
 
       		p_mptcp_option = recv_ether_frame + ETH_HDRLEN + IP4_HDRLEN + TCP_HDRLEN;
       		mptcp_sub_type = *(p_mptcp_option)>>4;
       		switch(mptcp_sub_type){
+
       			case MPTCP_SUB_CAPABLE:
       				if(p_sf_cb->is_master != SUBFLOW_MASTER){
       					perror("recv_mptcp_packet: MPTCP_SUB_CAPABLE is not master subflow");
@@ -232,9 +247,14 @@ int recv_mptcp_packet(struct subflow_cb* p_sf_cb)
 		      		return 1;
      
       			case MPTCP_SUB_JOIN:
+      				if(p_sf_cb->is_master == SUBFLOW_MASTER){
+      					perror("recv_mptcp_packet: MPTCP_SUB_JOIN is master subflow");
+      					exit(EXIT_FAILURE);
+      				}
       				analyze_MPjoin_synack(p_mptcp_option,&mac_n,&(p_sf_cb->rand_rem_n),&(p_sf_cb->addr_id_rem));
       				//check man_n
       				return 1;
+
       			default:
       				perror("recv_mptcp_packet:unexpected mptcp_sub_type");
       		}
@@ -254,8 +274,8 @@ main (int argc, char **argv)
 
 	init_mpcb(&mpc_global,KEY_LOC_N);
 
-	init_subflow_cb(&sf_master,IP_LOC1_STR,IP_REM_STR,get_unused_port_number(),PORT_REM,0,SUBFLOW_MASTER);
-	init_subflow_cb(&sf_slave ,IP_LOC2_STR,IP_REM_STR,get_unused_port_number(),PORT_REM,SUBFLOW_ADDR_ID,SUBFLOW_MASTER+1);
+	init_subflow_cb(&sf_master,IP_LOC1_STR,IP_REM_STR,get_unused_port_number(IP_LOC1_STR),PORT_REM,0,SUBFLOW_MASTER,&sf_slave);
+	init_subflow_cb(&sf_slave ,IP_LOC2_STR,IP_REM_STR,get_unused_port_number(IP_LOC2_STR),PORT_REM,SUBFLOW_ADDR_ID,SUBFLOW_MASTER+1,NULL);
 
 	do_iptable();
 
@@ -264,7 +284,10 @@ main (int argc, char **argv)
 	send_mptcp_packet(&sf_master,MPTCP_SUB_CAPABLE,SYN,NULL,0);
 
   	//second handshake
-	recv_mptcp_packet(&sf_master);
+	if(-1 == recv_mptcp_packet(&sf_master)){
+		send_mptcp_packet(&sf_master,MPTCP_SUB_FCLOSE,FIN|ACK,NULL,0);
+		return(EXIT_FAILURE);
+	}
 
   	//third handshake
 	send_mptcp_packet(&sf_master,MPTCP_SUB_CAPABLE,ACK,NULL,0);
@@ -273,6 +296,7 @@ main (int argc, char **argv)
 	send_mptcp_packet(&sf_master,MPTCP_SUB_ADD_ADDR,ACK,NULL,0);
 
 	//Send first data packet
+	send_mptcp_packet(&sf_master,MPTCP_SUB_DSS,ACK|PSH,HTTP_FRAME1_STR,strlen(HTTP_FRAME1_STR));
 
 	//MP_JOIN
 	send_mptcp_packet(&sf_slave,MPTCP_SUB_JOIN,SYN,NULL,0);
@@ -280,8 +304,13 @@ main (int argc, char **argv)
 	recv_mptcp_packet(&sf_slave);
 
 	send_mptcp_packet(&sf_slave,MPTCP_SUB_JOIN,ACK,NULL,0);
+	
 	//send second data packet
+	send_mptcp_packet(&sf_slave,MPTCP_SUB_DSS,ACK|PSH,HTTP_FRAME2_STR,strlen(HTTP_FRAME2_STR));
 
+	//FCLOSE
+	send_mptcp_packet(&sf_master,MPTCP_SUB_FCLOSE,FIN|ACK,NULL,0);
+	send_mptcp_packet(&sf_slave ,MPTCP_SUB_FCLOSE,FIN|ACK,NULL,0);
 	return (EXIT_SUCCESS);
 
 

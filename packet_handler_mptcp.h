@@ -30,14 +30,14 @@
 #define TCP_OPTION_MAX_LEN 40
 
 //TCP Flag
-#define FIN 0
-#define SYN 1
-#define RST 2
-#define PSH 3
-#define ACK 4
-#define URG 5
-#define ECE 6
-#define CWR 7
+#define FIN (1<<0)
+#define SYN (1<<1)
+#define RST (1<<2)
+#define PSH (1<<3)
+#define ACK (1<<4)
+#define URG (1<<5)
+#define ECE (1<<6)
+#define CWR (1<<7)
 
 
 //MPTCP
@@ -155,6 +155,7 @@ struct subflow_cb
 	uint8_t addr_id_rem;
 
 	uint8_t is_master;// 0 is master
+	struct subflow_cb *p_slave_sf_cb;//consideration: how about slave1 subflow want to ADD ADDR?
 };
 
 
@@ -196,7 +197,7 @@ uint32_t get_data_seq_h_32(uint64_t idsn_n){
 
 int create_packet(unsigned char *buf, uint16_t *plen, 
 	struct subflow_cb* p_sf_cb, 
-	unsigned char FLAG,//network format 
+	unsigned char flags,//network format 
 	uint16_t win, //host format
 	unsigned char *buf_opt, 
 	uint16_t len_opt,
@@ -222,46 +223,25 @@ int create_packet(unsigned char *buf, uint16_t *plen,
 	
 	// IPv4 header length (4 bits): Number of 32-bit words in header = 5
 	iphdr.ip_hl = IP4_HDRLEN / sizeof (uint32_t);
-	
-	// Internet Protocol version (4 bits): IPv4
-	iphdr.ip_v = 4;
-	
-	// Type of service (8 bits)
-	iphdr.ip_tos = 0;
-	
-	// Total length of datagram (16 bits): IP header + TCP header + TCP options
-	iphdr.ip_len = htons (*plen);
-	
-	// ID sequence number (16 bits): unused, since single datagram
-	iphdr.ip_id = htons (0);
+	iphdr.ip_v = 4;	// Internet Protocol version (4 bits): IPv4
+	iphdr.ip_tos = 0;// Type of service (8 bits)
+	iphdr.ip_len = htons (*plen);// Total length of datagram (16 bits): IP header + TCP header + TCP options
+	iphdr.ip_id = htons (0);// ID sequence number (16 bits): unused, since single datagram
 	
 	// Flags, and Fragmentation offset (3, 13 bits): 0 since single datagram
-	
-	// Zero (1 bit)
-	ip_flags[0] = 0;
-	
-	// Do not fragment flag (1 bit)
-	ip_flags[1] = 0;
-	
-	// More fragments following flag (1 bit)
-	ip_flags[2] = 0;
-	
-	// Fragmentation offset (13 bits)
-	ip_flags[3] = 0;
+	ip_flags[0] = 0;// Zero (1 bit)
+	ip_flags[1] = 0;// Do not fragment flag (1 bit)
+	ip_flags[2] = 0;// More fragments following flag (1 bit)
+	ip_flags[3] = 0;// Fragmentation offset (13 bits)
 	
 	iphdr.ip_off = htons ((ip_flags[0] << 15)
 		+ (ip_flags[1] << 14)
 		+ (ip_flags[2] << 13)
 		+  ip_flags[3]);
 	
-	// Time-to-Live (8 bits): default to maximum value
-	iphdr.ip_ttl = 255;
-	
-	// Transport layer protocol (8 bits): 6 for TCP
-	iphdr.ip_p = IPPROTO_TCP;
-
+	iphdr.ip_ttl = 255;// Time-to-Live (8 bits): default to maximum value
+	iphdr.ip_p = IPPROTO_TCP;// Transport layer protocol (8 bits): 6 for TCP
 	iphdr.ip_src.s_addr = p_sf_cb->ip_loc_n;
-
 	iphdr.ip_dst.s_addr = p_sf_cb->ip_rem_n;
 	
 	// IPv4 header checksum (16 bits): set to 0 when calculating checksum
@@ -269,41 +249,17 @@ int create_packet(unsigned char *buf, uint16_t *plen,
 	iphdr.ip_sum = checksum ((uint16_t *) &iphdr, IP4_HDRLEN);
 	
 	// TCP header
-	
-	// Source port number (16 bits)
 	tcphdr.th_sport = htons (p_sf_cb->port_loc_h);
-	
-	// Destination port number (16 bits)
 	tcphdr.th_dport = htons (p_sf_cb->port_rem_h);
-	
-	// Sequence number (32 bits)
 	tcphdr.th_seq = htonl (p_sf_cb->tcp_seq_next_h);
-
-	
-	// Acknowledgement number (32 bits): 0 in first packet of SYN/ACK process
+	printf("254 tcp_seq_next_h:%x\n",p_sf_cb->tcp_seq_next_h);
 	tcphdr.th_ack = htonl (p_sf_cb->tcp_ack_h);
-	
-	// Reserved (4 bits): should be 0
-	tcphdr.th_x2 = 0;
-	
-	// Data offset (4 bits): size of TCP header + length of options, in 32-bit words
-	tcphdr.th_off = (TCP_HDRLEN  + len_opt) / 4;
-	
-	// Flags (8 bits)	
-	tcp_flags[FLAG] = 1;	
-	tcphdr.th_flags = 0;
-	for (int i=0; i<8; i++) {
-		tcphdr.th_flags += (tcp_flags[i] << i);
-	}
-	
-	// Window size (16 bits)
-	tcphdr.th_win = htons (win);
-	
-	// Urgent pointer (16 bits): 0 (only valid if URG flag is set)
-	tcphdr.th_urp = htons (0);
-	
-	// TCP checksum (16 bits)
-	tcphdr.th_sum = tcp4_checksum (iphdr, tcphdr, buf_opt, len_opt, buf_payload, len_payload);
+	tcphdr.th_x2 = 0;// Reserved (4 bits): should be 0
+	tcphdr.th_off = (TCP_HDRLEN  + len_opt) / 4;// Data offset (4 bits): size of TCP header + length of options, in 32-bit words
+	tcphdr.th_flags = flags;	// Flags (8 bits)		
+	tcphdr.th_win = htons (win);// Window size (16 bits)
+	tcphdr.th_urp = htons (0);// Urgent pointer (16 bits): 0 (only valid if URG flag is set)
+	tcphdr.th_sum = tcp4_checksum (iphdr, tcphdr, buf_opt, len_opt, buf_payload, len_payload);// TCP checksum (16 bits)
 		
 	// IPv4 header
 	memcpy (buf, &iphdr, IP4_HDRLEN * sizeof (uint8_t));
@@ -314,18 +270,23 @@ int create_packet(unsigned char *buf, uint16_t *plen,
 	// TCP Options
 	memcpy (buf + IP4_HDRLEN + TCP_HDRLEN, buf_opt, len_opt * sizeof (uint8_t));
 
-	//Payload
+	//Without Payload
 	if(len_payload == 0){
 		//Update Seq num
-		if(FLAG != ACK)
+		if(flags != ACK){
 			p_sf_cb->tcp_seq_next_h++;
+			printf("277 tcp_seq_next_h:%x\n",p_sf_cb->tcp_seq_next_h);
+		}
 		return 1;
 	}
 
+	//Payload
 	memcpy (buf + IP4_HDRLEN + TCP_HDRLEN + len_opt, buf_payload, len_payload * sizeof (uint8_t));
 	p_sf_cb->tcp_seq_next_h += len_payload;
+	printf("285 tcp_seq_next_h:%x\n",p_sf_cb->tcp_seq_next_h);
 	return 1;
 }
+
 
 /* one problem: uint64 is only accessable in 64bit machine, that's why they use 2 32bit array to present 64bit key*/
 int create_MPcap(unsigned char *top, uint16_t *len, uint64_t key_loc_n, uint64_t key_rem_n) 
@@ -349,8 +310,6 @@ int create_MPcap(unsigned char *top, uint16_t *len, uint64_t key_loc_n, uint64_t
 	*(len) += tpcap_len;
 	return 1;
 }
-
-
 
 
 int create_MPadd_addr(unsigned char *top, uint16_t *len, unsigned char addr_id_loc, uint32_t ip_loc_n) {
@@ -420,6 +379,55 @@ int create_mpdss_ack(unsigned char *top, uint16_t *len, uint32_t ack_num_h){
 	return 1;
 }
 
+int create_complete_MPdss(unsigned char *top, uint16_t *len, 
+		uint32_t data_ack_h, uint32_t data_seq_next_h, uint32_t sub_seq_next_h, uint16_t data_len) {
+//*for Data Seq is 8 octets and Data Ack is 8 octets
+//	unsigned char tpdss_len = (dssopt_out.Aflag)? 8:4;//4 bytes min, 8bytes if dan present
+//	tpdss_len += (dssopt_out.Mflag)? 10:0;//add 8bytes more for dsn and ssn
+//	*(start+3) += (dssopt_out.Rflag & 0x01)<<5;
+//	*(start+3) += (dssopt_out.Fflag & 0x01)<<4;
+//	*(start+3) += (dssopt_out.mflag & 0x01)<<3;
+//	*(start+3) += (dssopt_out.Mflag & 0x01)<<2;
+//	*(start+3) += (dssopt_out.aflag & 0x01)<<1;
+//	*(start+3) += dssopt_out.Aflag & 0x01;
+
+	unsigned char tpdss_len = MPTCP_SUB_LEN_DSM_ALIGN;
+
+	if((*len) + tpdss_len > TCP_OPTION_MAX_LEN) return 0;
+	
+	unsigned char* start = top + (*len);
+
+	*(start) = 30;
+	*(start+1) = tpdss_len;
+	*(start+2) = ( ((unsigned char) MPTCP_SUB_DSS)<<4) & 0xf0;
+	*(start+3) = 0x05;
+	*((uint32_t*) (start+4)) = htonl(data_ack_h);
+	*((uint32_t*) (start+8)) = htonl(data_seq_next_h);
+	*((uint32_t*) (start+12)) = htonl(sub_seq_next_h);
+	*((uint16_t*) (start+16)) = htons(data_len);
+	(*len) += tpdss_len;
+	return 1;
+}
+
+
+int create_MPfclose(unsigned char *top, uint16_t *len, uint64_t *key_rem) {
+
+	uint16_t new_len = MPTCP_SUB_LEN_FCLOSE;
+	
+	if((*len) + new_len > TCP_OPTION_MAX_LEN) return 0;
+	(*len) += new_len;
+
+	unsigned char *start = top + (*len);
+	*(start) = 30;
+	*(start+1) = new_len;
+	*(start+2) = ( ((unsigned char) MPTCP_SUB_FCLOSE)<<4) & 0xf0;
+	*(start+3) = 0x81;//no checksum
+
+	*((uint64_t*) (start+4)) = *key_rem;
+
+	return 1;
+}
+
 //consideration: combine mpcap and mpjoin in here? 
 int analyze_MPjoin_synack(uint8_t * const start, uint64_t *mac_n, uint32_t *rand_nmb_h, unsigned char *address_id) {
 
@@ -436,7 +444,7 @@ int analyze_MPjoin_synack(uint8_t * const start, uint64_t *mac_n, uint32_t *rand
 	return 1;
 }
 
-uint16_t get_unused_port_number() {
+uint16_t get_unused_port_number(char* ip_str) {
 
 	int sd;
 	struct sockaddr_in skaddr;
@@ -448,8 +456,11 @@ uint16_t get_unused_port_number() {
 	}
 	
 	skaddr.sin_family = AF_INET;
-	skaddr.sin_addr.s_addr = htonl(INADDR_ANY);
+	skaddr.sin_addr.s_addr = inet_addr(ip_str);
 	skaddr.sin_port = htons(0);
+
+	int optval = 0;
+	setsockopt(sd, SOL_SOCKET, SO_REUSEPORT, &optval, sizeof(optval));
 
 	if (bind(sd, (struct sockaddr *) &skaddr, sizeof(skaddr))<0) {
 	  perror("Problem binding\n");
