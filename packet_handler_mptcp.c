@@ -2,8 +2,8 @@
 
 //××××××××××××××
 //Variables need to be setted
-#define IP_LOC1_STR "172.31.98.85"
-#define IP_LOC2_STR "127.0.0.1"
+#define IP_LOC1_STR "169.235.31.237"
+#define IP_LOC2_STR "10.25.15.112"
 #define IP_REM_STR "130.104.230.45"
 #define PORT_REM 80
 #define SUBFLOW_ADDR_ID 3
@@ -171,6 +171,9 @@ int send_mptcp_packet(struct subflow_cb* p_sf_cb, uint8_t mptcp_sub_type, uint8_
 }
 
 
+
+
+
 int recv_mptcp_packet(struct subflow_cb* p_sf_cb)
 {
 	int recvsd,bytes,status,mptcp_sub_type = 0;
@@ -187,11 +190,7 @@ int recv_mptcp_packet(struct subflow_cb* p_sf_cb)
 		exit (EXIT_FAILURE);
 	}
 
-
-	// Cast recv_iphdr as pointer to ip header within received ethernet frame.
 	recv_iphdr = get_iphdr_from_ether_frame(recv_ether_frame);
-
-	// Cast recv_tcphdr as pointer to tcp header within received ethernet frame.
 	recv_tcphdr = get_tcphdr_from_ether_frame(recv_ether_frame);
 
 	// RECEIVE LOOP
@@ -199,15 +198,12 @@ int recv_mptcp_packet(struct subflow_cb* p_sf_cb)
 
 		memset (recv_ether_frame, 0, IP_MAXPACKET * sizeof (uint8_t));
 		if ((bytes = recv(recvsd, recv_ether_frame, IP_MAXPACKET, 0)) < 0) {
-
-			status = errno;
-
         	// Deal with error conditions first.
-        	if (status == EAGAIN) {  // EAGAIN = 11
+        	if (errno == EAGAIN) {  // EAGAIN = 11
         		perror ("recv_mptcp_packet() failed ");
         		exit (EXIT_FAILURE);
         	} 
-        	else if (status == EINTR) {  // EINTR = 4
+        	else if (errno == EINTR) {  // EINTR = 4
           		continue;  // Something weird happened, but let's keep listening.
       		} 
       		else {
@@ -275,7 +271,7 @@ main (int argc, char **argv)
 
 	init_mpcb(&mpc_global,KEY_LOC_N);
 
-	init_subflow_cb(&sf_master,IP_LOC1_STR,IP_REM_STR,get_unused_port_number(IP_LOC1_STR),PORT_REM,0,SUBFLOW_MASTER,&sf_slave);
+	init_subflow_cb(&sf_master,IP_LOC1_STR,IP_REM_STR,get_unused_port_number(IP_LOC1_STR)+1,PORT_REM,0,SUBFLOW_MASTER,&sf_slave);
 	init_subflow_cb(&sf_slave ,IP_LOC2_STR,IP_REM_STR,get_unused_port_number(IP_LOC2_STR),PORT_REM,SUBFLOW_ADDR_ID,SUBFLOW_MASTER+1,NULL);
 
 	do_iptable();
