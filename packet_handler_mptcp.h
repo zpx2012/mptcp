@@ -422,9 +422,6 @@ int create_complete_MPdss(unsigned char *top, uint16_t *len,
 }
 
 
-
-
-
 int create_MPfclose(unsigned char *top, uint16_t *len, uint64_t *key_rem) {
 
 	uint16_t new_len = MPTCP_SUB_LEN_FCLOSE;
@@ -458,6 +455,9 @@ int analyze_MPjoin_synack(uint8_t * const start, uint64_t *mac_n, uint32_t *rand
 
 	return 1;
 }
+
+
+
 
 uint16_t get_unused_port_number(char* ip_str) {
 
@@ -843,3 +843,13 @@ allocate_intmem (int len)
 }
 
 
+int strhex_to_bytehex(char* strhex,int8_t* bytehexbuf,int len){
+
+	char* strhex_ptr = strhex;
+	int8_t* bytehexbuf_ptr = bytehexbuf;
+	for(;bytehexbuf_ptr<bytehexbuf+len;bytehexbuf_ptr++){
+		sscanf(strhex_ptr,"%02hhx",bytehexbuf_ptr);
+		strhex_ptr +=2;
+	}
+	return 1;
+}
