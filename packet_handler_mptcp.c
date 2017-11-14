@@ -12,6 +12,11 @@
 #define HTTP_FRAME1_STR "474554"
 #define HTTP_FRAME2_STR "202f66616c6f6e67676f6e6720485454502f312e310d0a486f73743a206d756c7469706174682d7463702e6f72670d0a436f6e6e656374696f6e3a206b6565702d616c6976650d0a557067726164652d496e7365637572652d52657175657374733a20310d0a557365722d4167656e743a204d6f7a696c6c612f352e3020285831313b204c696e7578207838365f363429204170706c655765624b69742f3533372e333620284b48544d4c2c206c696b65204765636b6f29205562756e7475204368726f6d69756d2f36312e302e333136332e313030204368726f6d652f36312e302e333136332e313030205361666172692f3533372e33360d0a4163636570743a20746578742f68746d6c2c6170706c69636174696f6e2f7868746d6c2b786d6c2c6170706c69636174696f6e2f786d6c3b713d302e392c696d6167652f776562702c696d6167652f61706e672c2a2f2a3b713d302e380d0a4163636570742d456e636f64696e673a20677a69702c206465666c6174650d0a4163636570742d4c616e67756167653a207a682d434e2c7a683b713d302e380d0a0d0a"
 
+
+//Consideration:
+//1.should master sf_cb be global?
+//2.is it ok to update ack in find_subflow_cb?
+
 struct mpcb mpc_global;
 
 
@@ -171,18 +176,107 @@ int send_mptcp_packet(struct subflow_cb* p_sf_cb, uint8_t mptcp_sub_type, uint8_
 }
 
 
+//find subflow_cb by 4turple in recv ether frame
+int find_subflow_cb(uint8_t* recv_ether_frame,struct subflow_cb *p_mastr_sf_cb,struct subflow_cb** pp_result_sf_cb)
+{
+	int i;
+	struct ip *recv_iphdr = NULL;
+	struct tcphdr* recv_tcphdr = NULL;
+	struct subflow_cb *p_index_sf_cb = NULL;
+
+	recv_iphdr = get_iphdr_from_ether_frame(recv_ether_frame);
+	recv_tcphdr = get_tcphdr_from_ether_frame(recv_ether_frame);
+
+	if (recv_iphdr->ip_p != IPPROTO_TCP)
+		return -1;
+
+	p_index_sf_cb = p_mastr_sf_cb;
+	for(i = 0; i < 2;i++){
+		if( (recv_iphdr->ip_src.s_addr == p_index_sf_cb->ip_rem_n) &&
+			(recv_iphdr->ip_dst.s_addr == p_index_sf_cb->ip_loc_n) &&  
+			(recv_tcphdr->th_sport     == htons(p_index_sf_cb->port_rem_h)) && 
+			(recv_tcphdr->th_dport     == htons(p_index_sf_cb->port_loc_h))
+		){
+			//check seq and update ack in mpc
+  			if(p_index_sf_cb->tcp_seq_next_h != ntohl(recv_tcphdr->th_ack)){
+				fprintf(stderr,"seq check in recv_mpcap_synack failed:tcp_seq_next_h %x,th_ack %x\n",p_index_sf_cb->tcp_seq_next_h,ntohl(recv_tcphdr->th_ack));
+				printf("\n");
+				return -1;
+			}
+			uint16_t len_payload = ntohs(recv_iphdr->ip_len) - IP4_HDRLEN - ntohs(recv_tcphdr->th_off)*4;
+			p_index_sf_cb->tcp_ack_h = ntohl(recv_tcphdr->th_seq) + len_payload;
+
+			//found, return
+			*pp_result_sf_cb = p_index_sf_cb;
+			return 1;
+		}
+		p_index_sf_cb = p_mastr_sf_cb->p_slave_sf_cb;
+	}
+	return -1;
+
+}
+
+
+int handle_mptcp_option(uint8_t* recv_ether_frame, struct subflow_cb* p_sf_cb)
+{
+	uint8_t mptcp_sub_type = 0,*p_mptcp_option = NULL;
+	uint64_t mac_n = 0;
+
+	p_mptcp_option = recv_ether_frame + ETH_HDRLEN + IP4_HDRLEN + TCP_HDRLEN;
+	mptcp_sub_type = *(p_mptcp_option)>>4;
+	switch(mptcp_sub_type){
+
+		case MPTCP_SUB_CAPABLE:
+			if(p_sf_cb->is_master != SUBFLOW_MASTER){
+				perror("recv_mptcp_packet: MPTCP_SUB_CAPABLE is not master subflow");
+				exit(EXIT_FAILURE);
+			}
+			mpc_global.key_rem_n = *((uint64_t*) (p_mptcp_option+4));
+			mptcp_key_sha1(mpc_global.key_rem_n,&(mpc_global.token_rem_n),&(mpc_global.idsn_rem_n));
+			mpc_global.data_ack_h = get_data_seq_h_32(mpc_global.idsn_rem_n);
+			return 1;
+
+		case MPTCP_SUB_JOIN:
+			if(p_sf_cb->is_master == SUBFLOW_MASTER){
+				perror("recv_mptcp_packet: MPTCP_SUB_JOIN is master subflow");
+				exit(EXIT_FAILURE);
+			}
+			analyze_MPjoin_synack(p_mptcp_option,&mac_n,&(p_sf_cb->rand_rem_n),&(p_sf_cb->addr_id_rem));
+      				//check man_n
+			return 1;
+
+		case MPTCP_SUB_FAIL:
+			//send FCOLSE to reset
+			send_mptcp_packet(p_sf_cb,MPTCP_SUB_FCLOSE,ACK,NULL,0);
+
+		default:
+			perror("recv_mptcp_packet:unexpected mptcp_sub_type");
+	}
+
+}
+
+
+int handle_recv_mptcp_packet(uint8_t* recv_ether_frame, int len_recv_ether_frame,struct subflow_cb* p_mastr_sf_cb)
+{
+	struct subflow_cb* p_result_sf_cb = NULL;
+
+	if(find_subflow_cb(recv_ether_frame,p_mastr_sf_cb,&p_result_sf_cb) != 1)
+		return -1;
+	      	// Check for an IP ethernet frame. If not, ignore and keep listening.
+
+	handle_mptcp_option(recv_ether_frame,p_result_sf_cb);
+	
+}
+
 
 
 
 int recv_mptcp_packet(struct subflow_cb* p_sf_cb)
 {
-	int recvsd,bytes,status,mptcp_sub_type = 0;
-	uint64_t mac_n;
-	uint8_t *recv_ether_frame,*p_mptcp_option;
-	struct ip *recv_iphdr;
-	struct tcphdr* recv_tcphdr;
+	int recvsd,bytes;
+	uint8_t *buf_recv_ether_frame;
 
-	recv_ether_frame = allocate_ustrmem (IP_MAXPACKET);
+	buf_recv_ether_frame = allocate_ustrmem (IP_MAXPACKET);
 
 	// Submit request for a raw socket descriptor to receive packets.
 	if ((recvsd = socket (PF_PACKET, SOCK_RAW, htons (ETH_P_ALL))) < 0) {
@@ -190,14 +284,11 @@ int recv_mptcp_packet(struct subflow_cb* p_sf_cb)
 		exit (EXIT_FAILURE);
 	}
 
-	recv_iphdr = get_iphdr_from_ether_frame(recv_ether_frame);
-	recv_tcphdr = get_tcphdr_from_ether_frame(recv_ether_frame);
-
 	// RECEIVE LOOP
 	for (;;) {
 
-		memset (recv_ether_frame, 0, IP_MAXPACKET * sizeof (uint8_t));
-		if ((bytes = recv(recvsd, recv_ether_frame, IP_MAXPACKET, 0)) < 0) {
+		memset (buf_recv_ether_frame, 0, IP_MAXPACKET * sizeof (uint8_t));
+		if ((bytes = recv(recvsd, buf_recv_ether_frame, IP_MAXPACKET, 0)) < 0) {
         	// Deal with error conditions first.
         	if (errno == EAGAIN) {  // EAGAIN = 11
         		perror ("recv_mptcp_packet() failed ");
@@ -212,51 +303,12 @@ int recv_mptcp_packet(struct subflow_cb* p_sf_cb)
       		}
       	}  // End of error handling conditionals.
 
-      	// Check for an IP ethernet frame. If not, ignore and keep listening.
-      	if (
-      		(recv_iphdr->ip_p == IPPROTO_TCP) && 
-      		(p_sf_cb->ip_rem_n == recv_iphdr->ip_src.s_addr) &&
-      		(p_sf_cb->ip_loc_n == recv_iphdr->ip_dst.s_addr) &&  
-      		(htons(p_sf_cb->port_rem_h) == recv_tcphdr->th_sport) && 
-      		(htons(p_sf_cb->port_loc_h) == recv_tcphdr->th_dport)
-      		)
-      	{
-      		//check seq and update ack in mpc
-      		if(p_sf_cb->tcp_seq_next_h != ntohl(recv_tcphdr->th_ack)){
-      			fprintf(stderr,"seq check in recv_mpcap_synack failed:tcp_seq_next_h %x,th_ack %x\n",p_sf_cb->tcp_seq_next_h,ntohl(recv_tcphdr->th_ack));
-      			printf("\n");
-      			return -1;
-      		}
-      		p_sf_cb->tcp_ack_h = ntohl(recv_tcphdr->th_seq) + 1;
-
-      		p_mptcp_option = recv_ether_frame + ETH_HDRLEN + IP4_HDRLEN + TCP_HDRLEN;
-      		mptcp_sub_type = *(p_mptcp_option)>>4;
-      		switch(mptcp_sub_type){
-
-      			case MPTCP_SUB_CAPABLE:
-      				if(p_sf_cb->is_master != SUBFLOW_MASTER){
-      					perror("recv_mptcp_packet: MPTCP_SUB_CAPABLE is not master subflow");
-      					exit(EXIT_FAILURE);
-      				}
-      			    mpc_global.key_rem_n = *((uint64_t*) (p_mptcp_option+4));
-      				mptcp_key_sha1(mpc_global.key_rem_n,&(mpc_global.token_rem_n),&(mpc_global.idsn_rem_n));
-		      		mpc_global.data_ack_h = get_data_seq_h_32(mpc_global.idsn_rem_n);
-		      		return 1;
-     
-      			case MPTCP_SUB_JOIN:
-      				if(p_sf_cb->is_master == SUBFLOW_MASTER){
-      					perror("recv_mptcp_packet: MPTCP_SUB_JOIN is master subflow");
-      					exit(EXIT_FAILURE);
-      				}
-      				analyze_MPjoin_synack(p_mptcp_option,&mac_n,&(p_sf_cb->rand_rem_n),&(p_sf_cb->addr_id_rem));
-      				//check man_n
-      				return 1;
-
-      			default:
-      				perror("recv_mptcp_packet:unexpected mptcp_sub_type");
-      		}
-       	} 
+      	if(handle_recv_mptcp_packet(buf_recv_ether_frame,bytes,p_sf_cb) == 1)
+      		return 1;
     }  // End of Receive loop.
+
+    free(buf_recv_ether_frame);
+
     return 1;
 }
 
@@ -281,10 +333,7 @@ main (int argc, char **argv)
 	send_mptcp_packet(&sf_master,MPTCP_SUB_CAPABLE,SYN,NULL,0);
 
   	//second handshake
-	if(-1 == recv_mptcp_packet(&sf_master)){
-		send_mptcp_packet(&sf_master,MPTCP_SUB_FCLOSE,ACK,NULL,0);
-		return(EXIT_FAILURE);
-	}
+	recv_mptcp_packet(&sf_master);
 
   	//third handshake
 	send_mptcp_packet(&sf_master,MPTCP_SUB_CAPABLE,ACK,NULL,0);
