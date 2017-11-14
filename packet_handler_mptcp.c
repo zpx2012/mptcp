@@ -272,7 +272,7 @@ int handle_recv_mptcp_packet(uint8_t* recv_ether_frame, int len_recv_ether_frame
 				printf("\n");
 				return -1;
 			}
-			p_index_sf_cb->tcp_ack_h = ntohl(recv_tcphdr->th_seq);
+			p_index_sf_cb->tcp_ack_h = ntohl(recv_tcphdr->th_seq) + 1;
 
 			//found, return
 			parse_tcp_options((uint8_t*)(recv_tcphdr) + TCP_HDRLEN,ntohs(recv_tcphdr->th_off)*4 - TCP_HDRLEN,p_index_sf_cb);
