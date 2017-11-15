@@ -189,31 +189,10 @@ uint32_t get_data_seq_h_32(uint64_t idsn_n){
 uint16_t mpdsm_checksum(unsigned char *p_dsm, uint32_t idsn_high, unsigned char *payload,uint16_t len_payload){
 
 	__wsum csum = 0;
-
-	csum = csum_partial(payload,len_payload,csum);
-	csum = csum_fold(csum_partial(p_dsm,12,csum));
-	csum = csum_fold(csum_partial(&idsn_high, 4, csum));
-	printf("csum1:%x\n", csum);
-
-	csum = 0;
 	csum = csum_partial(payload,len_payload,csum);
 	csum = csum_partial(p_dsm,12,csum);
-	csum = csum_fold(csum_partial(&idsn_high, 4, csum));
-	printf("csum2:%x\n", csum);
+	return csum_fold(csum_partial(&idsn_high, 4, csum));
 
-	uint8_t *psu_dss = allocate_ustrmem(16);
-	memset(psu_dss,0,16);
-	*((uint32_t*)psu_dss) = idsn_high;
-	*((uint32_t*)(psu_dss+4)) = *((uint32_t*)p_dsm);
-	*((uint32_t*)(psu_dss+8)) = *((uint32_t*)(p_dsm+4));
-	*((uint16_t*)(psu_dss+12))= *((uint16_t*)(p_dsm+8));
-	csum = 0;
-	csum = csum_partial(payload,len_payload,csum);
-	csum = csum_fold(csum_partial(psu_dss, 16, csum));	
-	printf("csum3:%x\n", csum);
-	free(psu_dss);
-
-	return csum;
 }
 
 int create_packet(unsigned char *buf, uint16_t *plen, 
