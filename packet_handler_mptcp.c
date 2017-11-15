@@ -161,7 +161,8 @@ int send_mptcp_packet(struct subflow_cb* p_sf_cb, uint8_t mptcp_sub_type, uint8_
 			break;
 
 		case MPTCP_SUB_DSS:
-			create_complete_MPdss(opt_buffer,&opt_len,mpc_global.data_ack_h,mpc_global.data_seq_next_h,p_sf_cb->sub_seq_next_h,(uint32_t)((mpc_global.idsn_loc_n)>>32),payload,payload_len);
+			create_complete_MPdss(opt_buffer,&opt_len,mpc_global.data_ack_h,mpc_global.data_seq_next_h,p_sf_cb->sub_seq_next_h,(uint32_t)((mpc_global.idsn_loc_n)),payload,payload_len);
+			printf("idsn_n:%llx idsn_high_n:%x\n", ntohll(mpc_global.idsn_loc_n),ntohl((uint32_t)mpc_global.idsn_loc_n));
 			break;
 
 		case MPTCP_SUB_FCLOSE:
@@ -176,11 +177,15 @@ int send_mptcp_packet(struct subflow_cb* p_sf_cb, uint8_t mptcp_sub_type, uint8_
 			break;
 	}
 
+	printf("create packet:seq %x, tcp_flag %d\n", p_sf_cb->tcp_seq_next_h,tcp_flag);
 	create_packet(packet_buffer,&packet_len,p_sf_cb,tcp_flag,win,opt_buffer,opt_len,payload,payload_len);	
 
 	send_packet(packet_buffer,packet_len);
 
+	printf("%s\n", opt_buffer);
 	free(opt_buffer);
+	printf("free packet_buffer:seq %x, tcp_flag %d\n", p_sf_cb->tcp_seq_next_h, tcp_flag);
+	printf("%s\n", packet_buffer);
 	free(packet_buffer);
 
 	return 1;
@@ -199,6 +204,7 @@ int parse_mptcp_option(uint8_t* p_mptcp_option, struct subflow_cb* p_sf_cb)
 				perror("recv_mptcp_packet: MPTCP_SUB_CAPABLE is not master subflow");
 				exit(EXIT_FAILURE);
 			}
+			printf("recv MPTCP_CAPABLE\n");
 			mpc_global.key_rem_n = *((uint64_t*) (p_mptcp_option+4));
 			mptcp_key_sha1(mpc_global.key_rem_n,&(mpc_global.token_rem_n),&(mpc_global.idsn_rem_n));
 			mpc_global.data_ack_h = get_data_seq_h_32(mpc_global.idsn_rem_n);
@@ -209,12 +215,14 @@ int parse_mptcp_option(uint8_t* p_mptcp_option, struct subflow_cb* p_sf_cb)
 				perror("recv_mptcp_packet: MPTCP_SUB_JOIN is master subflow");
 				exit(EXIT_FAILURE);
 			}
+			printf("recv MPTCP_JOIN\n");
 			analyze_MPjoin_synack(p_mptcp_option,&mac_n,&(p_sf_cb->rand_rem_n),&(p_sf_cb->addr_id_rem));
       		//check man_n
 			return 1;
 
 		case MPTCP_SUB_FAIL:
 			//send FCOLSE to reset
+			printf("recv MPTCP_FAIL\n");
 			send_mptcp_packet(p_sf_cb,MPTCP_SUB_FCLOSE,ACK,NULL,0);
 
 		default:
@@ -328,8 +336,6 @@ int recv_mptcp_packet(struct subflow_cb* p_sf_cb)
 
 
 
-
-
 int
 main (int argc, char **argv)
 {
@@ -337,7 +343,7 @@ main (int argc, char **argv)
 
 	init_mpcb(&mpc_global,KEY_LOC_N);
 
-	init_subflow_cb(&sf_master,IP_LOC1_STR,IP_REM_STR,get_unused_port_number(IP_LOC1_STR),PORT_REM,0,SUBFLOW_MASTER,&sf_slave);
+	init_subflow_cb(&sf_master,IP_LOC1_STR,IP_REM_STR,get_rand()+2,PORT_REM,0,SUBFLOW_MASTER,&sf_slave);
 	init_subflow_cb(&sf_slave ,IP_LOC2_STR,IP_REM_STR,get_unused_port_number(IP_LOC2_STR),PORT_REM,SUBFLOW_ADDR_ID,SUBFLOW_MASTER+1,NULL);
 
 	do_iptable();
@@ -356,26 +362,26 @@ main (int argc, char **argv)
 //	send_mptcp_packet(&sf_master,MPTCP_SUB_ADD_ADDR,ACK,NULL,0);
 
 	//Send first data packet
-	printf("%s\n", HTTP_FRAME1_STR);
 	uint16_t len_payload = strlen(HTTP_FRAME1_STR)/2;
 	uint8_t *payload = allocate_ustrmem(len_payload);
 	strhex_to_bytehex(HTTP_FRAME1_STR,payload,len_payload);
+//	payload[len_payload] = 0;
 	send_mptcp_packet(&sf_master,MPTCP_SUB_DSS,ACK|PSH,payload,len_payload);
 	free(payload);
 
 	//MP_JOIN
-	send_mptcp_packet(&sf_slave,MPTCP_SUB_JOIN,SYN,NULL,0);
+//	send_mptcp_packet(&sf_slave,MPTCP_SUB_JOIN,SYN,NULL,0);
 
-	recv_mptcp_packet(&sf_master);
+//	recv_mptcp_packet(&sf_master);
 
-	send_mptcp_packet(&sf_slave,MPTCP_SUB_JOIN,ACK,NULL,0);
+//	send_mptcp_packet(&sf_slave,MPTCP_SUB_JOIN,ACK,NULL,0);
 	
 	//send second data packet
-	send_mptcp_packet(&sf_slave,MPTCP_SUB_DSS,ACK|PSH,HTTP_FRAME2_STR,strlen(HTTP_FRAME2_STR));
+//	send_mptcp_packet(&sf_slave,MPTCP_SUB_DSS,ACK|PSH,HTTP_FRAME2_STR,strlen(HTTP_FRAME2_STR));
 
 	//FCLOSE
-	send_mptcp_packet(&sf_master,MPTCP_SUB_FCLOSE,ACK,NULL,0);
-	send_mptcp_packet(&sf_slave ,NO_MPTCP_OPTION,RST,NULL,0);
+//	send_mptcp_packet(&sf_master,MPTCP_SUB_FCLOSE,ACK,NULL,0);
+//	send_mptcp_packet(&sf_slave ,NO_MPTCP_OPTION,RST,NULL,0);
 	return (EXIT_SUCCESS);
 
 

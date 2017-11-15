@@ -191,8 +191,29 @@ uint16_t mpdsm_checksum(unsigned char *p_dsm, uint32_t idsn_high, unsigned char 
 	__wsum csum = 0;
 
 	csum = csum_partial(payload,len_payload,csum);
+	csum = csum_fold(csum_partial(p_dsm,12,csum));
+	csum = csum_fold(csum_partial(&idsn_high, 4, csum));
+	printf("csum1:%x\n", csum);
+
+	csum = 0;
+	csum = csum_partial(payload,len_payload,csum);
 	csum = csum_partial(p_dsm,12,csum);
-	return csum_fold(csum_partial(&idsn_high, 4, csum));
+	csum = csum_fold(csum_partial(&idsn_high, 4, csum));
+	printf("csum2:%x\n", csum);
+
+	uint8_t *psu_dss = allocate_ustrmem(16);
+	memset(psu_dss,0,16);
+	*((uint32_t*)psu_dss) = idsn_high;
+	*((uint32_t*)(psu_dss+4)) = *((uint32_t*)p_dsm);
+	*((uint32_t*)(psu_dss+8)) = *((uint32_t*)(p_dsm+4));
+	*((uint16_t*)(psu_dss+12))= *((uint16_t*)(p_dsm+8));
+	csum = 0;
+	csum = csum_partial(payload,len_payload,csum);
+	csum = csum_fold(csum_partial(psu_dss, 16, csum));	
+	printf("csum3:%x\n", csum);
+	free(psu_dss);
+
+	return csum;
 }
 
 int create_packet(unsigned char *buf, uint16_t *plen, 
@@ -207,14 +228,8 @@ int create_packet(unsigned char *buf, uint16_t *plen,
 	int *ip_flags, *tcp_flags;
 	struct ip iphdr;
 	struct tcphdr tcphdr;
-
-	// Allocate memory for various arrays.
-	ip_flags = allocate_intmem (4);
-	tcp_flags = allocate_intmem (8);
 	
-	if((len_payload==0 && buf_payload!=NULL) || (len_payload!=0 && buf_payload==NULL) ||
-		(len_opt==0    && buf_opt!=NULL)     || (len_opt!=0     && buf_opt==NULL)
-	  ){
+	if((len_payload==0 && buf_payload!=NULL) || (len_payload!=0 && buf_payload==NULL)){
 		perror("payload sanity check failed in create_packet.\n");
 		return -1;
 	}
@@ -228,19 +243,8 @@ int create_packet(unsigned char *buf, uint16_t *plen,
 	iphdr.ip_v = 4;	// Internet Protocol version (4 bits): IPv4
 	iphdr.ip_tos = 0;// Type of service (8 bits)
 	iphdr.ip_len = htons (*plen);// Total length of datagram (16 bits): IP header + TCP header + TCP options
-	iphdr.ip_id = htons (0);// ID sequence number (16 bits): unused, since single datagram
-	
-	// Flags, and Fragmentation offset (3, 13 bits): 0 since single datagram
-	ip_flags[0] = 0;// Zero (1 bit)
-	ip_flags[1] = 0;// Do not fragment flag (1 bit)
-	ip_flags[2] = 0;// More fragments following flag (1 bit)
-	ip_flags[3] = 0;// Fragmentation offset (13 bits)
-	
-	iphdr.ip_off = htons ((ip_flags[0] << 15)
-		+ (ip_flags[1] << 14)
-		+ (ip_flags[2] << 13)
-		+  ip_flags[3]);
-	
+	iphdr.ip_id = htons (0);// ID sequence number (16 bits): unused, since single datagram	
+	iphdr.ip_off = 0;
 	iphdr.ip_ttl = 255;// Time-to-Live (8 bits): default to maximum value
 	iphdr.ip_p = IPPROTO_TCP;// Transport layer protocol (8 bits): 6 for TCP
 	iphdr.ip_src.s_addr = p_sf_cb->ip_loc_n;
