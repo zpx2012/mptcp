@@ -159,6 +159,7 @@ struct subflow_cb
 	struct subflow_cb *p_slave_sf_cb;//consideration: how about slave1 subflow want to ADD ADDR?
 };
 
+struct mpcb mpc_global;
 
 // Function prototypes
 char *allocate_strmem (int);
@@ -237,7 +238,7 @@ int create_packet(unsigned char *buf, uint16_t *plen,
 	tcphdr.th_sport = htons (p_sf_cb->port_loc_h);
 	tcphdr.th_dport = htons (p_sf_cb->port_rem_h);
 	tcphdr.th_seq = htonl (p_sf_cb->tcp_seq_next_h);
-	printf("254 tcp_seq_next_h:%x\n",p_sf_cb->tcp_seq_next_h);
+//	printf("254 tcp_seq_next_h:%x\n",p_sf_cb->tcp_seq_next_h);
 	tcphdr.th_ack = htonl (p_sf_cb->tcp_ack_h);
 	tcphdr.th_x2 = 0;// Reserved (4 bits): should be 0
 	tcphdr.th_off = (TCP_HDRLEN  + len_opt) / 4;// Data offset (4 bits): size of TCP header + length of options, in 32-bit words
@@ -257,7 +258,7 @@ int create_packet(unsigned char *buf, uint16_t *plen,
 		//Update Seq num
 		if(flags != ACK){
 			p_sf_cb->tcp_seq_next_h++;
-			printf("275 tcp_seq_next_h:%x\n",p_sf_cb->tcp_seq_next_h);
+//			printf("275 tcp_seq_next_h:%x\n",p_sf_cb->tcp_seq_next_h);
 		}
 		return 1;
 	}
@@ -269,7 +270,7 @@ int create_packet(unsigned char *buf, uint16_t *plen,
 		//Update Seq num
 		if(flags != ACK){
 			p_sf_cb->tcp_seq_next_h++;
-			printf("277 tcp_seq_next_h:%x\n",p_sf_cb->tcp_seq_next_h);
+//			printf("277 tcp_seq_next_h:%x\n",p_sf_cb->tcp_seq_next_h);
 		}
 		return 1;
 	}
@@ -277,7 +278,10 @@ int create_packet(unsigned char *buf, uint16_t *plen,
 	//Payload
 	memcpy (buf + IP4_HDRLEN + TCP_HDRLEN + len_opt, buf_payload, len_payload * sizeof (uint8_t));
 	p_sf_cb->tcp_seq_next_h += len_payload;
-	printf("285 tcp_seq_next_h:%x\n",p_sf_cb->tcp_seq_next_h);
+	p_sf_cb->sub_seq_next_h += len_payload;
+	mpc_global.data_seq_next_h += len_payload;
+
+//	printf("285 tcp_seq_next_h:%x\n",p_sf_cb->tcp_seq_next_h);
 	return 1;
 }
 
@@ -290,16 +294,15 @@ int create_MPcap(unsigned char *top, uint16_t *len, uint64_t key_loc_n, uint64_t
 
 	if((*len) + tpcap_len > TCP_OPTION_MAX_LEN) return 0;
 
-	unsigned char *start = top + (*len);
+	unsigned char *p_start = top + (*len);
 
-
-	*(start) = 30;
-	*(start+1) = tpcap_len;
-	*(start+2) = ( ((unsigned char) MPTCP_SUB_CAPABLE)<<4) & 0xf0;
-	*(start+3) = 0x81;//checksum on
-	*((uint64_t*) (start+4)) = key_loc_n;
+	*(p_start) = 30;
+	*(p_start+1) = tpcap_len;
+	*(p_start+2) = ( ((unsigned char) MPTCP_SUB_CAPABLE)<<4) & 0xf0;
+	*(p_start+3) = 0x81;//checksum on
+	*((uint64_t*) (p_start+4)) = key_loc_n;
 	if(key_rem_n != 0) {
-		*((uint64_t*) (start+12)) = key_rem_n;//only used for ACK
+		*((uint64_t*) (p_start+12)) = key_rem_n;//only used for ACK
 	}
 	*(len) += tpcap_len;
 	return 1;
@@ -312,31 +315,31 @@ int create_MPadd_addr(unsigned char *top, uint16_t *len, unsigned char addr_id_l
 	
 	if((*len) + new_len > TCP_OPTION_MAX_LEN) return 0;
 
-	unsigned char *start = top + (*len);
+	unsigned char *p_start = top + (*len);
 	
-	*(start) = 30;
-	*(start+1) = new_len;
-	*(start+2) = 0x34u;
-	*(start+3) = addr_id_loc;
-	*((uint32_t*) (start+4)) = ip_loc_n;
+	*(p_start) = 30;
+	*(p_start+1) = new_len;
+	*(p_start+2) = 0x34u;
+	*(p_start+3) = addr_id_loc;
+	*((uint32_t*) (p_start+4)) = ip_loc_n;
 	(*len) += new_len;
 	return 1;
 }
 
-int create_MPjoin_syn(unsigned char *top, uint16_t *len, uint32_t token, unsigned char addr_id) {
+int create_MPjoin_syn(unsigned char *top, uint16_t *len, uint32_t token, uint32_t rand_loc_n,unsigned char addr_id) {
 
 	uint16_t new_len = MPTCP_SUB_LEN_JOIN_SYN;
 
 	if((*len) + new_len > TCP_OPTION_MAX_LEN) return 0;
 
-	unsigned char *start = top + (*len);
+	unsigned char *p_start = top + (*len);
 
-	*(start) = 30;
-	*(start+1) = new_len;
-	*(start+2) = 0x10u;
-	*(start+3) = addr_id;
-	*((uint32_t*) (start+4)) = token;
-	*((uint32_t*) (start+8)) = get_rand();
+	*(p_start) = 30;
+	*(p_start+1) = new_len;
+	*(p_start+2) = 0x10u;
+	*(p_start+3) = addr_id;
+	*((uint32_t*) (p_start+4)) = token;
+	*((uint32_t*) (p_start+8)) = rand_loc_n;
 	(*len) += new_len;
 	return 1;
 }
@@ -345,13 +348,13 @@ int create_MPjoin_ack(unsigned char *top, uint16_t *len, uint32_t *mac_n) {
 
 	if((*len) + 24 > 40) return 0;
 
-	unsigned char *start = top + (*len);
-	*(start) = 30;
-	*(start+1) = 24;
-	*(start+2) = ( ((unsigned char) MPTCP_SUB_JOIN)<<4) ;
-	*(start+3) = 0;
+	unsigned char *p_start = top + (*len);
+	*(p_start) = 30;
+	*(p_start+1) = 24;
+	*(p_start+2) = ( ((unsigned char) MPTCP_SUB_JOIN)<<4) ;
+	*(p_start+3) = 0;
 
-	memcpy(start+4, (unsigned char*) mac_n, 20);
+	memcpy(p_start+4, (unsigned char*) mac_n, 20);
 	(*len) += 24;
 	return 1;
 }
@@ -362,13 +365,13 @@ int create_MPdss_ack(unsigned char *top, uint16_t *len, uint32_t ack_num_h){
 	
 	if((*len) + new_len > TCP_OPTION_MAX_LEN) return 0;
 
-	unsigned char *start = top + (*len);
+	unsigned char *p_start = top + (*len);
 	
-	*(start) = 30;
-	*(start+1) = new_len;
-	*(start+2) = 0x20u;
-	*(start+3) = 0x01;
-	*((uint32_t*) (start+4)) = htonl(ack_num_h);
+	*(p_start) = 30;
+	*(p_start+1) = new_len;
+	*(p_start+2) = 0x20u;
+	*(p_start+3) = 0x01;
+	*((uint32_t*) (p_start+4)) = htonl(ack_num_h);
 	(*len) += new_len;
 	return 1;
 }
@@ -378,63 +381,82 @@ int create_complete_MPdss(unsigned char *top, uint16_t *len,
 //*for Data Seq is 8 octets and Data Ack is 8 octets
 //	unsigned char tpdss_len = (dssopt_out.Aflag)? 8:4;//4 bytes min, 8bytes if dan present
 //	tpdss_len += (dssopt_out.Mflag)? 10:0;//add 8bytes more for dsn and ssn
-//	*(start+3) += (dssopt_out.Rflag & 0x01)<<5;
-//	*(start+3) += (dssopt_out.Fflag & 0x01)<<4;
-//	*(start+3) += (dssopt_out.mflag & 0x01)<<3;
-//	*(start+3) += (dssopt_out.Mflag & 0x01)<<2;
-//	*(start+3) += (dssopt_out.aflag & 0x01)<<1;
-//	*(start+3) += dssopt_out.Aflag & 0x01;
+//	*(p_start+3) += (dssopt_out.Rflag & 0x01)<<5;
+//	*(p_start+3) += (dssopt_out.Fflag & 0x01)<<4;
+//	*(p_start+3) += (dssopt_out.mflag & 0x01)<<3;
+//	*(p_start+3) += (dssopt_out.Mflag & 0x01)<<2;
+//	*(p_start+3) += (dssopt_out.aflag & 0x01)<<1;
+//	*(p_start+3) += dssopt_out.Aflag & 0x01;
 
 	unsigned char tpdss_len = MPTCP_SUB_LEN_DSM_ALIGN;
 
 	if((*len) + tpdss_len > TCP_OPTION_MAX_LEN) return 0;
 	
-	unsigned char* start = top + (*len);
+	unsigned char* p_start = top + (*len);
 
-	*(start) = 30;
-	*(start+1) = tpdss_len;
-	*(start+2) = ( ((unsigned char) MPTCP_SUB_DSS)<<4) & 0xf0;
-	*(start+3) = 0x05;
-	*((uint32_t*) (start+4))  = htonl(data_ack_h);
-	*((uint32_t*) (start+8))  = htonl(data_seq_next_h);
-	*((uint32_t*) (start+12)) = htonl(sub_seq_next_h);
-	*((uint16_t*) (start+16)) = htons(len_payload);
-	*((uint16_t*) (start+18)) = mpdsm_checksum(start+8,idsn_high,payload,len_payload);
+	*(p_start) = 30;
+	*(p_start+1) = tpdss_len;
+	*(p_start+2) = ( ((unsigned char) MPTCP_SUB_DSS)<<4) & 0xf0;
+	*(p_start+3) = 0x05;
+	*((uint32_t*) (p_start+4))  = htonl(data_ack_h);
+	*((uint32_t*) (p_start+8))  = htonl(data_seq_next_h);
+	*((uint32_t*) (p_start+12)) = htonl(sub_seq_next_h);
+	*((uint16_t*) (p_start+16)) = htons(len_payload);
+	*((uint16_t*) (p_start+18)) = mpdsm_checksum(p_start+8,idsn_high,payload,len_payload);
 	(*len) += tpdss_len;
 	return 1;
 }
 
+int analyze_complete_MPdss(uint8_t * const p_start, uint32_t *p_data_ack_h) {
+	uint32_t data_seq_h;
+	uint16_t data_len;
 
-int create_MPfclose(unsigned char *top, uint16_t *len, uint64_t *key_rem) {
+	if(*(p_start) != 30){
+		perror("analyze_MPdss: wrong mptcp pointer");
+		exit(EXIT_FAILURE);
+	}
+
+	if(*(p_start+3) != 0x05) //Complere MPdss
+		return -1;
+
+	data_seq_h   = htonl(*((uint32_t*) (p_start+8)));
+	data_len     = htons(*((uint32_t*) (p_start+16)));
+	*p_data_ack_h = data_seq_h + data_len + 1;
+	printf("data_seq:%d data_len:%d data_ack:%d\n", data_seq_h,data_len,*p_data_ack_h);
+
+	return 1;
+}
+
+int create_MPfclose(unsigned char *top, uint16_t *len, uint64_t key_rem) {
 
 	uint16_t new_len = MPTCP_SUB_LEN_FCLOSE;
 	
 	if((*len) + new_len > TCP_OPTION_MAX_LEN) return 0;
+
+	unsigned char *p_start = top + (*len);
+	*(p_start) = 30;
+	*(p_start+1) = new_len;
+	*(p_start+2) = ( ((unsigned char) MPTCP_SUB_FCLOSE)<<4) & 0xf0;
+	*(p_start+3) = 0x81;//no checksum
+
+	*((uint64_t*) (p_start+4)) = key_rem;
 	(*len) += new_len;
-
-	unsigned char *start = top + (*len);
-	*(start) = 30;
-	*(start+1) = new_len;
-	*(start+2) = ( ((unsigned char) MPTCP_SUB_FCLOSE)<<4) & 0xf0;
-	*(start+3) = 0x81;//no checksum
-
-	*((uint64_t*) (start+4)) = *key_rem;
 
 	return 1;
 }
 
 //consideration: combine mpcap and mpjoin in here? 
-int analyze_MPjoin_synack(uint8_t * const start, uint64_t *mac_n, uint32_t *rand_nmb_h, unsigned char *address_id) {
+int analyze_MPjoin_synack(uint8_t * const p_start, uint64_t *mac_n, uint32_t *rand_nmb_h, unsigned char *address_id) {
 
-	if(*(start) != 30){
+	if(*(p_start) != 30){
 		perror("analyze_MPjoin_synack: wrong mptcp pointer");
 		exit(EXIT_FAILURE);
 	}
 
 	//get token and find session
-	*address_id = *(start+3);
-	*mac_n = *( (uint64_t *) (start+4)) ;
-	*rand_nmb_h = ntohl(*(uint32_t *) (start+8));
+	*address_id = *(p_start+3);
+	*mac_n = *( (uint64_t *) (p_start+4)) ;
+	*rand_nmb_h = ntohl(*(uint32_t *) (p_start+8));
 
 	return 1;
 }
