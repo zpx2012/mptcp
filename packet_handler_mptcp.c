@@ -2,6 +2,8 @@
 
 //××××××××××××××
 //Variables need to be setted
+#define INTERF_1 ""
+#define INTERF_2 ""
 #define IP_LOC1_STR "169.235.31.234"
 #define IP_LOC2_STR "10.25.17.144"
 #define IP_REM_STR "130.104.230.45"
@@ -23,7 +25,8 @@
 //2.is it ok to update ack in find_subflow_cb?
 
 int init_subflow_cb(
-	struct subflow_cb* p_sf_cb, 
+	struct subflow_cb* p_sf_cb,
+	const char* interface_str, 
 	const char* ip_loc_str,
 	const char* ip_rem_str, 
 	uint16_t port_loc_h,
@@ -66,6 +69,9 @@ int init_subflow_cb(
 		perror ("socket() failed ");
 		exit (EXIT_FAILURE);
 	}
+
+	setsockopt(sd, SOL_SOCKET, SO_BINDTODEVICE, interface_str, strlen(interface_str));
+	
 	skaddr.sin_family = AF_INET;
 	skaddr.sin_addr.s_addr = p_sf_cb->ip_loc_n;;
 	skaddr.sin_port = htons(0);
@@ -435,8 +441,8 @@ main (int argc, char **argv)
 
 	init_mpcb(&mpc_global,KEY_LOC_N);
 
-	init_subflow_cb(&sf_master,IP_LOC1_STR,IP_REM_STR,PORT+2,PORT_REM,0,SUBFLOW_MASTER,&sf_slave);
-	init_subflow_cb(&sf_slave ,IP_LOC2_STR,IP_REM_STR,PORT,PORT_REM,SUBFLOW_ADDR_ID,SUBFLOW_MASTER+1,NULL);
+	init_subflow_cb(&sf_master,INTERF_1,IP_LOC1_STR,IP_REM_STR,PORT+2,PORT_REM,0,SUBFLOW_MASTER,&sf_slave);
+	init_subflow_cb(&sf_slave ,INTERF_1,IP_LOC2_STR,IP_REM_STR,PORT,PORT_REM,SUBFLOW_ADDR_ID,SUBFLOW_MASTER+1,NULL);
 
 	do_iptable();
 
