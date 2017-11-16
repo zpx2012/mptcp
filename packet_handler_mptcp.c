@@ -2,8 +2,8 @@
 
 //××××××××××××××
 //Variables need to be setted
-#define IP_LOC1_STR "192.168.1.133"
-#define IP_LOC2_STR "10.25.15.99"
+#define IP_LOC1_STR "169.235.31.234"
+#define IP_LOC2_STR "10.25.17.144"
 #define IP_REM_STR "130.104.230.45"
 #define PORT_REM 80
 #define PORT 3801
@@ -32,7 +32,8 @@ int init_subflow_cb(
 	uint8_t is_master,
 	struct subflow_cb *p_slave_sf_cb)
 {
-	int status;
+	int sd,status,length;
+	struct sockaddr_in skaddr;
 
 	if ((status = inet_pton (AF_INET, ip_loc_str, &(p_sf_cb->ip_loc_n))) != 1) {
 		fprintf (stderr, "inet_pton() failed.\nError message: %s", strerror (status));
@@ -45,7 +46,6 @@ int init_subflow_cb(
 		return -1;
 	}
 
-	p_sf_cb->port_loc_h = port_loc_h;
 	p_sf_cb->port_rem_h = port_rem_h;
 	p_sf_cb->tcp_ack_h = 0;
 	p_sf_cb->tcp_seq_next_h = random() % 65535;
@@ -60,6 +60,29 @@ int init_subflow_cb(
 		p_sf_cb->p_slave_sf_cb = p_slave_sf_cb;
 	else
 		p_sf_cb->p_slave_sf_cb = NULL;
+
+
+	if ((sd = socket(AF_INET, SOCK_RAW, IPPROTO_RAW)) < 0) {
+		perror ("socket() failed ");
+		exit (EXIT_FAILURE);
+	}
+	skaddr.sin_family = AF_INET;
+	skaddr.sin_addr.s_addr = p_sf_cb->ip_loc_n;;
+	skaddr.sin_port = htons(0);
+
+	if (bind(sd, (struct sockaddr *) &skaddr, sizeof(skaddr))<0) {
+	  perror("Problem binding\n");
+	  exit(EXIT_FAILURE);
+	}
+
+	length = sizeof(skaddr);
+	if (getsockname(sd, (struct sockaddr *) &skaddr, &length)<0) {
+	  perror("Error getsockname\n");
+	  exit(EXIT_FAILURE);
+	}
+
+	p_sf_cb->socket_d = sd;
+	p_sf_cb->port_loc_h = skaddr.sin_port;
 	return 1;
 
 }
@@ -88,29 +111,23 @@ void do_iptable(){
 
 }
 
-int send_packet(uint8_t* buf_pkg,int len_pkg)
+int send_packet(int sd,uint8_t* buf_pkg,int len_pkg)
 {
-	int sd,bytes;
+	int bytes;
 	struct sockaddr_in dst_addr;
-
-	// Submit request for a raw socket descriptor.
-	if ((sd = socket (AF_INET, SOCK_RAW, IPPROTO_RAW)) < 0) {
-		perror ("socket() failed ");
-		exit (EXIT_FAILURE);
-	}
 
 	// Fill out sockaddr_ll.
 	dst_addr.sin_family = AF_INET;
 	dst_addr.sin_port = get_tcphdr_from_ip_frame(buf_pkg)->th_dport;
 	dst_addr.sin_addr.s_addr = ((struct ip*)buf_pkg)->ip_dst.s_addr;
 
+	printf("sd:%d\n", sd);
+
 	// Send ethernet frame to socket.
 	if ((bytes = sendto (sd, buf_pkg, len_pkg, 0, (struct sockaddr *) &dst_addr, sizeof(dst_addr))) <= 0) {
 		perror ("sendto() failed");
 		exit (EXIT_FAILURE);
 	}
-
-	close (sd);
 
 	return 1;
 }
@@ -202,7 +219,7 @@ int send_mptcp_packet(struct subflow_cb* p_sf_cb, uint8_t mptcp_sub_type, uint8_
 //	printf("create packet:seq %x, tcp_flag %d\n", p_sf_cb->tcp_seq_next_h,tcp_flag);
 	create_packet(packet_buffer,&packet_len,p_sf_cb,tcp_flag,win,opt_buffer,opt_len,payload,payload_len);	
 
-	send_packet(packet_buffer,packet_len);
+	send_packet(p_sf_cb->socket_d,packet_buffer,packet_len);
 
 	free(opt_buffer);
 	free(packet_buffer);
@@ -340,7 +357,7 @@ int handle_recv_mptcp_packet(uint8_t* recv_ether_frame, int len_recv_ether_frame
 			//? make a funtion?
 			printf("tcp flag:%hhd\n", recv_tcphdr->th_flags);
 			if((recv_tcphdr->th_flags&SYN) !=0 || (recv_tcphdr->th_flags&FIN) != 0){
-				printf("recv SYN or FIN:th_flags&SYN %d,th_flags&FIN %d, SYN %d",recv_tcphdr->th_flags&SYN,recv_tcphdr->th_flags&FIN,SYN);
+				printf("recv SYN or FIN:th_flags&SYN %d,th_flags&FIN %d, SYN %d\n",recv_tcphdr->th_flags&SYN,recv_tcphdr->th_flags&FIN,SYN);
 				p_index_sf_cb->tcp_ack_h = ntohl(recv_tcphdr->th_seq) + 1;
 			}
 			else if((recv_tcphdr->th_flags&ACK) !=0){
@@ -419,7 +436,7 @@ main (int argc, char **argv)
 	init_mpcb(&mpc_global,KEY_LOC_N);
 
 	init_subflow_cb(&sf_master,IP_LOC1_STR,IP_REM_STR,PORT+2,PORT_REM,0,SUBFLOW_MASTER,&sf_slave);
-	init_subflow_cb(&sf_slave ,IP_LOC1_STR,IP_REM_STR,PORT,PORT_REM,SUBFLOW_ADDR_ID,SUBFLOW_MASTER+1,NULL);
+	init_subflow_cb(&sf_slave ,IP_LOC2_STR,IP_REM_STR,PORT,PORT_REM,SUBFLOW_ADDR_ID,SUBFLOW_MASTER+1,NULL);
 
 	do_iptable();
 

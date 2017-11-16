@@ -157,6 +157,8 @@ struct subflow_cb
 
 	uint8_t is_master;// 0 is master
 	struct subflow_cb *p_slave_sf_cb;//consideration: how about slave1 subflow want to ADD ADDR?
+
+	int socket_d;
 };
 
 struct mpcb mpc_global;
