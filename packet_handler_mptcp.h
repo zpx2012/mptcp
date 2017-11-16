@@ -446,7 +446,7 @@ int create_MPfclose(unsigned char *top, uint16_t *len, uint64_t key_rem) {
 }
 
 //consideration: combine mpcap and mpjoin in here? 
-int analyze_MPjoin_synack(uint8_t * const p_start, uint64_t *mac_n, uint32_t *rand_nmb_h, unsigned char *address_id) {
+int analyze_MPjoin_synack(uint8_t * const p_start, uint64_t *mac_n, uint32_t *rand_nmb_n, unsigned char *address_id) {
 
 	if(*(p_start) != 30){
 		perror("analyze_MPjoin_synack: wrong mptcp pointer");
@@ -456,7 +456,7 @@ int analyze_MPjoin_synack(uint8_t * const p_start, uint64_t *mac_n, uint32_t *ra
 	//get token and find session
 	*address_id = *(p_start+3);
 	*mac_n = *( (uint64_t *) (p_start+4)) ;
-	*rand_nmb_h = ntohl(*(uint32_t *) (p_start+8));
+	*rand_nmb_n = *((uint32_t *) (p_start+12));
 
 	return 1;
 }
