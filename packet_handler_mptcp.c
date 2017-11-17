@@ -145,6 +145,7 @@ int send_mptcp_packet(struct subflow_cb* p_sf_cb, uint8_t mptcp_sub_type, uint8_
 	uint8_t *opt_buffer= NULL,*packet_buffer = NULL,*payload = NULL;
 	uint16_t opt_len = 0,packet_len = 0, payload_len = 0,win = 29200;
 	uint8_t hash_mac[20];
+	int i;
 
 
 	// Allocate memory for various arrays.
@@ -181,7 +182,7 @@ int send_mptcp_packet(struct subflow_cb* p_sf_cb, uint8_t mptcp_sub_type, uint8_
 								(uint32_t *)hash_mac, 2,
 								4, (uint8_t *)&p_sf_cb->rand_loc_n,
 								4, (uint8_t *)&p_sf_cb->rand_rem_n);
-				for (int i = 0; i < 20; ++i)
+				for (i = 0; i < 20; ++i)
 					printf("%02hhx", hash_mac[i]);
 				printf("\n");
 				printf("send MPTCP_JOIN ack\n");
