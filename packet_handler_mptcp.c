@@ -2,9 +2,9 @@
 
 //××××××××××××××
 //Variables need to be setted
-#define INTERF_1 "enp4s0"
+#define INTERF_1 "eth0"
 #define INTERF_2 "wlp3s0"
-#define IP_LOC1_STR "169.235.31.234"
+#define IP_LOC1_STR "202.112.50.150"
 #define IP_LOC2_STR "10.25.17.144"
 #define IP_REM_STR "130.104.230.45"
 #define PORT_REM 80
@@ -49,6 +49,7 @@ int init_subflow_cb(
 		return -1;
 	}
 
+	p_sf_cb->port_loc_h = port_loc_h;
 	p_sf_cb->port_rem_h = port_rem_h;
 	p_sf_cb->tcp_ack_h = 0;
 	p_sf_cb->tcp_seq_next_h = random() % 65535;
@@ -75,21 +76,21 @@ int init_subflow_cb(
 	
 	skaddr.sin_family = AF_INET;
 	skaddr.sin_addr.s_addr = p_sf_cb->ip_loc_n;;
-	skaddr.sin_port = htons(0);
+	skaddr.sin_port = htons(port_loc_h);
 
 	if (bind(sd, (struct sockaddr *) &skaddr, sizeof(skaddr))<0) {
 	  perror("Problem binding\n");
 	  exit(EXIT_FAILURE);
 	}
 
-	length = sizeof(skaddr);
-	if (getsockname(sd, (struct sockaddr *) &skaddr, &length)<0) {
-	  perror("Error getsockname\n");
-	  exit(EXIT_FAILURE);
-	}
+//	length = sizeof(skaddr);
+//	if (getsockname(sd, (struct sockaddr *) &skaddr, &length)<0) {
+//	  perror("Error getsockname\n");
+//	  exit(EXIT_FAILURE);
+//	}
 
 	p_sf_cb->socket_d = sd;
-	p_sf_cb->port_loc_h = skaddr.sin_port;
+//	p_sf_cb->port_loc_h = skaddr.sin_port;
 	return 1;
 
 }
@@ -443,7 +444,7 @@ main (int argc, char **argv)
 	init_mpcb(&mpc_global,KEY_LOC_N);
 
 	init_subflow_cb(&sf_master,INTERF_1,IP_LOC1_STR,IP_REM_STR,PORT+2,PORT_REM,0,SUBFLOW_MASTER,&sf_slave);
-	init_subflow_cb(&sf_slave ,INTERF_2,IP_LOC2_STR,IP_REM_STR,PORT,PORT_REM,SUBFLOW_ADDR_ID,SUBFLOW_MASTER+1,NULL);
+	init_subflow_cb(&sf_slave ,INTERF_1,IP_LOC1_STR,IP_REM_STR,PORT,PORT_REM,SUBFLOW_ADDR_ID,SUBFLOW_MASTER+1,NULL);
 
 	do_iptable();
 
