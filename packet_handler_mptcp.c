@@ -8,7 +8,7 @@
 #define IP_LOC2_STR "10.25.17.144"
 #define IP_REM_STR "130.104.230.45"
 #define PORT_REM 80
-#define PORT 3801
+#define PORT 3804
 #define SUBFLOW_ADDR_ID 3
 
 #define KEY_LOC_N 0x5f6257d35e39d488 
