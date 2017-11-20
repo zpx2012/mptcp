@@ -2,9 +2,9 @@
 
 //××××××××××××××
 //Variables need to be setted
-#define INTERF_1 "eth0"
+#define INTERF_1 "eth1"
 #define INTERF_2 "wlp3s0"
-#define IP_LOC1_STR "202.112.50.150"
+#define IP_LOC1_STR "139.129.13.125"
 #define IP_LOC2_STR "10.25.17.144"
 #define IP_REM_STR "130.104.230.45"
 #define PORT_REM 80
